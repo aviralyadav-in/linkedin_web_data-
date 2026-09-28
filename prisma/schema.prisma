@@ -1,0 +1,20 @@
+// Read-only view of the `contacts` table that linkedin-2/linkedin_feed.py fills.
+// The table is owned by that script: never run `prisma migrate` or `prisma db push` here.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// type is one of: telegram, email, phone, whatsapp
+model Contact {
+  type  String
+  value String
+
+  @@id([type, value])
+  @@map("contacts")
+}

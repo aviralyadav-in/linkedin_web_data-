@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LinkedIn Contacts (frontend)
 
-## Getting Started
+`linkedin-2` wali script jo contacts PostgreSQL (`linkedin_db` → `contacts` table) mein save karti hai, unhe yeh Next.js + Prisma app browser mein dikhata hai.
 
-First, run the development server:
+Yeh app database se **sirf padhta hai**. Table `linkedin-2/linkedin_feed.py` banati hai, isliye yahan kabhi `prisma migrate` ya `prisma db push` mat chalana.
 
-```bash
+## Chalana
+
+```powershell
+cd C:\Users\Hp\Desktop\linkedin-data
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Browser mein kholo: http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Naya data dekhne ke liye bas page refresh karo. Page har baar database se taaza data laata hai.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Production mode (thoda tez)
 
-## Learn More
+```powershell
+npm run build
+npm run start
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Page par kya hai
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Tiles:** All, Email, Phone, WhatsApp aur Telegram ki ginti. Kisi tile par click karo to sirf wahi type dikhega.
+- **Search:** email, number ya username ka koi bhi hissa likho.
+- **Open:** email → mail app, phone → call, WhatsApp number → `wa.me`, Telegram username → `t.me`.
+- **Copy:** value clipboard mein copy ho jaati hai.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Setup (pehle se ho chuka hai)
 
-## Deploy on Vercel
+- `.env` mein `DATABASE_URL` hai, wahi jo `linkedin-2/.env` mein hai. Password badlo to dono jagah badalna.
+- `.env` git mein nahi jaati (`.gitignore` mein `.env*` hai).
+- Prisma client `npm install` ke baad apne aap banta hai (`postinstall: prisma generate`). Haath se banana ho to: `npx prisma generate`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Files
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| File | Kaam |
+|---|---|
+| `prisma/schema.prisma` | `contacts` table ka model (`type`, `value`) |
+| `prisma.config.ts` | Prisma CLI ke liye database URL (`.env` se) |
+| `src/lib/prisma.ts` | Database connection (sirf server par) |
+| `src/app/page.tsx` | Database se contacts padhta hai |
+| `src/app/contacts-table.tsx` | Tiles, search aur table |
+| `src/app/error.tsx` | Database band ho to message |
+
+## Agar page par error aaye
+
+"Data load nahi ho paya" dikhe to:
+- PostgreSQL service chal rahi hai ya nahi, check karo.
+- `.env` ka `DATABASE_URL` sahi hai ya nahi, check karo.
