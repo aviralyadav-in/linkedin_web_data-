@@ -25,20 +25,20 @@ export default function Error({ error, retry }: { error: Error & { digest?: stri
           </svg>
         </div>
 
-        <h1 className="mt-4 text-lg font-semibold tracking-tight">Database se connect nahi ho paya</h1>
+        <h1 className="mt-4 text-lg font-semibold tracking-tight">Couldn&apos;t connect to the database</h1>
         <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-          Dashboard ko contacts ka data nahi mil raha. Neeche di gayi cheezein check karke dobara try karo.
+          The dashboard couldn&apos;t load contact data. Check the items below, then try again.
         </p>
 
         <ul className="mt-5 space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-left text-sm dark:border-zinc-800 dark:bg-zinc-900">
           {[
-            <>PostgreSQL service chal rahi hai</>,
+            <>The PostgreSQL service is running</>,
             <>
-              <code className="rounded bg-zinc-200/70 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-800">.env</code> mein{" "}
+              <code className="rounded bg-zinc-200/70 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-800">.env</code> has
+              the correct{" "}
               <code className="rounded bg-zinc-200/70 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-800">
                 DATABASE_URL
-              </code>{" "}
-              sahi hai
+              </code>
             </>,
           ].map((item, i) => (
             <li key={i} className="flex items-start gap-2.5 text-zinc-600 dark:text-zinc-300">
@@ -76,7 +76,7 @@ export default function Error({ error, retry }: { error: Error & { digest?: stri
           >
             <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
           </svg>
-          Dobara try karo
+          Try again
         </button>
 
         {error.digest && (

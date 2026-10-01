@@ -22,9 +22,9 @@ export default function NotFound() {
         <p className="mt-4 text-5xl font-semibold tracking-tight tabular-nums text-zinc-300 dark:text-zinc-700">
           404
         </p>
-        <h1 className="mt-2 text-lg font-semibold tracking-tight">Yeh page nahi mila</h1>
+        <h1 className="mt-2 text-lg font-semibold tracking-tight">Page not found</h1>
         <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-          Jo page aap dhoond rahe ho vo exist nahi karta ya move ho gaya hai.
+          The page you&apos;re looking for doesn&apos;t exist or has been moved.
         </p>
 
         <Link
@@ -43,7 +43,7 @@ export default function NotFound() {
           >
             <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Zm6 13V12h6v10" />
           </svg>
-          Dashboard par wapas jao
+          Back to dashboard
         </Link>
       </div>
     </main>

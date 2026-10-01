@@ -2,25 +2,20 @@
 // rather than jump: sidebar shell, sticky search bar, then table rows.
 export default function Loading() {
   return (
-    <div className="flex min-h-dvh w-full" aria-busy="true" aria-label="Data load ho raha hai">
+    <div className="flex min-h-dvh w-full" aria-busy="true" aria-label="Loading data">
       {/* sidebar shell (desktop only, like the real one) */}
       <aside className="hidden w-72 shrink-0 border-r border-zinc-200 lg:block dark:border-zinc-800">
         <div className="animate-pulse px-5 py-5">
           <div className="h-4 w-36 rounded bg-zinc-200 dark:bg-zinc-800" />
           <div className="mt-2 h-3 w-24 rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
         </div>
+        <div className="animate-pulse px-5 pb-4">
+          <div className="h-14 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
+        </div>
         <div className="animate-pulse space-y-2 px-5">
           {Array.from({ length: 5 }, (_, i) => (
             <div key={i} className="h-9 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
           ))}
-        </div>
-        <div className="animate-pulse px-5 pt-8">
-          <div className="h-3 w-16 rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
-          <div className="mt-3 space-y-2">
-            {Array.from({ length: 3 }, (_, i) => (
-              <div key={i} className="h-8 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
-            ))}
-          </div>
         </div>
       </aside>
 
