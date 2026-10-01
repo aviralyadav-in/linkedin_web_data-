@@ -34,6 +34,7 @@ npm run start
 **Contacts (`/`)**
 - **Sidebar:** type ke filters (All, Email, Phone, WhatsApp, Telegram) ginti ke saath, naye aaye contacts, Refresh aur dark/light mode.
 - **Commands link:** sidebar mein scraper ki live haalat (Ready / Chal raha hai / API offline). Run naye contacts save kare ya khatam ho, to table apne aap refresh hoti hai.
+- **User comments link:** sidebar mein, naye User comments tab ke liye.
 - **Search, CSV download, rows select karna**, aur har row par Open / Copy / Share.
 
 **Commands (`/commands`)**
@@ -44,6 +45,16 @@ npm run start
 - Ek waqt mein ek hi command chalti hai; tab tak Start run band rehta hai.
 - **Recent runs:** kisi par click karo to uske logs dikhenge.
 - **LinkedIn login on a server:** server ke liye session file upload aur **Check login**.
+
+**User comments (`/comments`)**
+- Commands aur User comments page ke header mein tabs hain, ek se doosre par jaane ke liye.
+- Kisi LinkedIn account ka username (jaise `satyanadella`) ya profile URL do, aur **Find comments** dabao. `linkedin-2` ka `linkedin_comments.py` us account ke Activity → Comments page se uske saare comments laata hai. Contacts database mein kuch save nahi hota.
+- **Get:** **All comments** (saare comments, post ke saath) ya **Only contacts** (comments mein mile email, phone number, WhatsApp, Telegram, wahi rules jo scraper contacts database ke liye use karta hai; button **Find contacts** ho jaata hai).
+- **Max comments** (1 se 5000, sabse naye pehle). **Unlimited** switch on karo to box chhup jaata hai aur account ke saare comments aate hain (bade accounts mein ghante lag sakte hain); off karo to box wapas. LinkedIn yeh list har baar load karte waqt kuch comments chhod deta hai, isliye list hamesha 5 baar padhi jaati hai aur sab jod diye jaate hain.
+- Comments aate-aate dikhte hain: date, comment ka text, reply ho to kis comment ka, aur post (author, text) ke saath **Open comment** / **Open post** links. **Stop** se lookup ruk jaata hai; jitne mile, woh rehte hain.
+- **Only contacts** ke results: har contact ek baar (type badge ke saath), kitne comments mein mila, aur sabse naya comment jisme woh hai (**Open comment** link). Har contact ke saath **Open** (mail / call / WhatsApp / Telegram) aur **Copy** buttons. Contacts database mein ye bhi save nahi hote.
+- Results mein search, aur **CSV** download (search kiya ho to sirf wahi rows; Only contacts mein contacts ki CSV).
+- **Earlier lookups:** pichhle lookups, click karo to unke comments. Commands page ki Recent runs mein bhi dikhte hain (**Open in User comments** link ke saath).
 
 ## Setup
 
@@ -121,14 +132,19 @@ Bina HTTPS ke dashboard ka password network par saaf padha ja sakta hai.
 | `src/lib/prisma.ts` | Database connection (sirf server par) |
 | `src/lib/scraper.ts` | Scraper API ko call karna, token ke saath (sirf server par) |
 | `src/lib/scraper-types.ts` | Scraper API ke data ke types |
+| `src/lib/contact-links.ts` | Contact ka link (mailto, tel, wa.me, t.me), contacts table aur User comments dono mein |
 | `src/app/page.tsx` | Database se contacts padhta hai |
 | `src/app/dashboard.tsx` | Contacts ka poora UI: sidebar, search, table, CSV |
 | `src/app/scraper-status.tsx` | Sidebar ka Commands link, scraper ki live haalat ke saath |
 | `src/app/commands/page.tsx` | Commands page: API se commands, status aur history laata hai |
 | `src/app/commands/commands-panel.tsx` | Commands page ka UI: New run card, run panel, logs, history, session |
+| `src/app/comments/page.tsx` | User comments page: API se status aur pichhle lookups laata hai |
+| `src/app/comments/comments-panel.tsx` | User comments ka UI: form (All comments / Only contacts, Unlimited), results, search, CSV, pichhle lookups |
+| `src/app/comments/comments-result.ts` | Comments run ka nateeja (dono pages par) |
+| `src/app/page-tabs.tsx` | Commands / User comments tabs |
 | `src/app/api/scraper/[...path]/route.ts` | Browser se scraper API tak ka raasta (sirf allowed calls) |
 | `src/proxy.ts` | Optional username/password (`DASHBOARD_USER` / `DASHBOARD_PASSWORD`) |
-| `src/app/loading.tsx`, `src/app/commands/loading.tsx` | Load hote waqt skeleton |
+| `src/app/loading.tsx`, `src/app/commands/loading.tsx`, `src/app/comments/loading.tsx` | Load hote waqt skeleton |
 | `src/app/error.tsx`, `src/app/not-found.tsx` | Database band ho to message, aur 404 page |
 
 ## Agar kuch kaam na kare

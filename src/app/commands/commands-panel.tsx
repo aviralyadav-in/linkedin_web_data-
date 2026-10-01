@@ -13,6 +13,9 @@ import type {
   ScraperStatus,
 } from "@/lib/scraper-types";
 
+import { commentsHref, commentsResult } from "../comments/comments-result";
+import PageTabs from "../page-tabs";
+
 const MAX_LOG_LINES = 3000;
 const DEFAULT_MAX = 500;
 // linkedin_feed.py's own defaults and flags, used until the API has answered
@@ -84,9 +87,14 @@ const ICONS = {
   check: "M20 6 9 17l-5-5",
   reset: "M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5",
   flag: "M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7",
+  search: "m21 21-4.3-4.3M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z",
+  download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4m4-5 5 5 5-5m-5 5V3",
+  external: "M15 3h6v6m0-6L10 14m8-1v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
+  message: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+  reply: "m9 17-5-5 5-5M20 18v-2a4 4 0 0 0-4-4H4",
 };
 
-function Icon({ name, className = "h-4 w-4" }: { name: keyof typeof ICONS; className?: string }) {
+export function Icon({ name, className = "h-4 w-4" }: { name: keyof typeof ICONS; className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -103,7 +111,7 @@ function Icon({ name, className = "h-4 w-4" }: { name: keyof typeof ICONS; class
   );
 }
 
-const STATUS: Record<RunStatus, { label: string; className: string }> = {
+export const STATUS: Record<RunStatus, { label: string; className: string }> = {
   running: { label: "Running", className: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" },
   succeeded: {
     label: "Completed",
@@ -114,23 +122,23 @@ const STATUS: Record<RunStatus, { label: string; className: string }> = {
   interrupted: { label: "Interrupted", className: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" },
 };
 
-const TYPE_LABEL: Record<string, string> = { email: "Email", phone: "Phone", whatsapp: "WhatsApp", telegram: "Telegram" };
+export const TYPE_LABEL: Record<string, string> = { email: "Email", phone: "Phone", whatsapp: "WhatsApp", telegram: "Telegram" };
 
-const TYPE_BADGE: Record<string, string> = {
+export const TYPE_BADGE: Record<string, string> = {
   email: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
   phone: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300",
   whatsapp: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
   telegram: "bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300",
 };
 
-const BUTTON =
+export const BUTTON =
   "inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-all active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 dark:focus-visible:ring-offset-zinc-950";
-const PRIMARY = `${BUTTON} bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300`;
-const SECONDARY = `${BUTTON} border border-zinc-200 bg-white hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:hover:border-zinc-500`;
-const CARD = "rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950";
-const EYEBROW = "text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400";
+export const PRIMARY = `${BUTTON} bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300`;
+export const SECONDARY = `${BUTTON} border border-zinc-200 bg-white hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:hover:border-zinc-500`;
+export const CARD = "rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950";
+export const EYEBROW = "text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400";
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(readonly status: number) {
     super(`HTTP ${status}`);
   }
@@ -138,10 +146,10 @@ class ApiError extends Error {
 
 // "token": the API answers but rejects SCRAPER_API_TOKEN; "offline": it can't be reached at all
 export type Link = "online" | "offline" | "token";
-const linkFromError = (e: unknown): Link => (e instanceof ApiError && e.status === 401 ? "token" : "offline");
+export const linkFromError = (e: unknown): Link => (e instanceof ApiError && e.status === 401 ? "token" : "offline");
 
 // Calls go to this app's /api/scraper/* routes, which add the API token on the server.
-async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`/api/scraper/${path}`, {
@@ -156,7 +164,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-const post = <T,>(path: string, body: unknown = {}) => api<T>(path, { method: "POST", body: JSON.stringify(body) });
+export const post = <T,>(path: string, body: unknown = {}) => api<T>(path, { method: "POST", body: JSON.stringify(body) });
 
 type Action = "start" | "stop" | "session";
 
@@ -194,6 +202,9 @@ function cli(fields: CommandField[], values: Record<FieldName, number>) {
 function runName(run: Run) {
   if (run.kind === "session_import") return "LinkedIn session import";
   if (run.kind === "session_check") return "LinkedIn login check";
+  if (run.kind === "comments") {
+    return `${run.contacts_only ? "Contacts from comments" : "Comments"}: ${run.username ?? "a profile"}`;
+  }
   const v = run.values;
   if (!v) return "Scraper run";
   if (v.commented_posts === 0) return v.scrolls === 0 ? "Feed only · first screen" : "Feed only";
@@ -202,12 +213,16 @@ function runName(run: Run) {
   return v.author_comments > 0 ? "Steps 1, 2 & 4" : "Steps 1 & 2";
 }
 
+// a User comments run's count for the history: its comments, or the contacts found in them
+const commentsCount = (run: Run) =>
+  run.contacts_only ? `${run.contacts_found ?? 0} contacts` : `${run.comments_found ?? 0} comments`;
+
 function phaseLabel(phase: string | null) {
   const n = /^Step (\d)/.exec(phase ?? "")?.[1];
   return n && STEP_TITLE[n] ? `Step ${n} · ${STEP_TITLE[n]}` : phase;
 }
 
-const plural = (n: string, word: string) => `${n} ${word}${n === "1" ? "" : "s"}`;
+export const plural = (n: string, word: string) => `${n} ${word}${n === "1" ? "" : "s"}`;
 
 // linkedin_feed.py's post labels: "post 3/20", "author 2 post 1/10", "author 2 comment wala post 1/10"
 function postLabel(label: string) {
@@ -258,7 +273,7 @@ function sessionResult(run: Run) {
   return run.status === "stopped" ? "Stopped." : "Didn't finish. See the output below.";
 }
 
-function duration(seconds: number) {
+export function duration(seconds: number) {
   const s = Math.max(0, Math.round(seconds));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -282,12 +297,12 @@ const subscribeNothing = () => () => {};
 
 // Formatted in the browser only: the server's timezone and locale (UTC on a Linux server) would show the
 // wrong time, and hydration keeps server-rendered text as it is.
-function LocalTime({ epoch }: { epoch: number }) {
+export function LocalTime({ epoch }: { epoch: number }) {
   return useSyncExternalStore(subscribeNothing, () => clockTime(epoch), () => "");
 }
 
 // a clock that ticks only while something is running, for the elapsed-time label
-function useNow(active: boolean) {
+export function useNow(active: boolean) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
@@ -553,7 +568,7 @@ export default function CommandsPanel({ configured, initialLink, initialCommands
   return (
     <div className="w-full">
       <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/85 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/85">
-        <div className="flex w-full items-center gap-3 px-4 py-3 sm:px-6">
+        <div className="flex w-full flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
           <Link
             href="/"
             className="rounded-lg border border-zinc-200 p-2 hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
@@ -567,6 +582,7 @@ export default function CommandsPanel({ configured, initialLink, initialCommands
               Run the LinkedIn scraper without a terminal
             </p>
           </div>
+          <PageTabs active="commands" />
           <ApiBadge configured={configured} link={link} busy={busy} />
         </div>
       </header>
@@ -630,9 +646,10 @@ export default function CommandsPanel({ configured, initialLink, initialCommands
               />
             </div>
 
+            {/* scroll-mt clears the sticky header, which is two rows (title, tabs) on a phone */}
             <aside
               ref={panelRef}
-              className="min-w-0 scroll-mt-20 lg:sticky lg:top-20 lg:col-start-2 lg:row-span-2 lg:row-start-1"
+              className="min-w-0 scroll-mt-32 sm:scroll-mt-20 lg:sticky lg:top-20 lg:col-start-2 lg:row-span-2 lg:row-start-1"
               aria-label="Run status"
             >
               <RunPanel
@@ -671,11 +688,11 @@ function CommandText({ command }: { command: string }) {
   ));
 }
 
-function Code({ children }: { children: ReactNode }) {
+export function Code({ children }: { children: ReactNode }) {
   return <code className="rounded bg-zinc-200/70 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-800">{children}</code>;
 }
 
-function Notice({ title, children }: { title: string; children: ReactNode }) {
+export function Notice({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
       <div className="flex items-center gap-2 font-semibold">
@@ -687,7 +704,7 @@ function Notice({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function ApiBadge({ configured, link, busy }: { configured: boolean; link: Link; busy: boolean }) {
+export function ApiBadge({ configured, link, busy }: { configured: boolean; link: Link; busy: boolean }) {
   const [label, dot] = !configured
     ? ["Not set up", "bg-zinc-400"]
     : link === "token"
@@ -705,12 +722,12 @@ function ApiBadge({ configured, link, busy }: { configured: boolean; link: Link;
   );
 }
 
-function StatusPill({ status }: { status: RunStatus }) {
+export function StatusPill({ status }: { status: RunStatus }) {
   const s = STATUS[status] ?? STATUS.interrupted;
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${s.className}`}>{s.label}</span>;
 }
 
-function Switch({
+export function Switch({
   checked,
   onChange,
   label,
@@ -1149,6 +1166,7 @@ function RunPanel({
   const end = running || ending ? now / 1000 : run.ended_at;
   const elapsed = end === null ? null : end - run.started_at;
   const scrape = run.kind === "scrape";
+  const comments = run.kind === "comments";
   const progress = progressText(run.progress);
   const elsewhere = current?.status === "running" && !isCurrent ? current : null;
 
@@ -1196,9 +1214,15 @@ function RunPanel({
             <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
               <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                 <Icon name="users" className="h-3 w-3" />
-                New contacts
+                {comments ? (run.contacts_only ? "Contacts" : "Comments") : "New contacts"}
               </dt>
-              <dd className="mt-0.5 font-semibold tabular-nums">{scrape ? run.new_contacts : "–"}</dd>
+              <dd className="mt-0.5 font-semibold tabular-nums">
+                {scrape
+                  ? run.new_contacts
+                  : comments
+                    ? ((run.contacts_only ? run.contacts_found : run.comments_found) ?? 0)
+                    : "–"}
+              </dd>
             </div>
             <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
               <dt className="text-zinc-500 dark:text-zinc-400">Started</dt>
@@ -1217,7 +1241,16 @@ function RunPanel({
               {progress && <div className="mt-0.5 text-xs text-zinc-500 tabular-nums dark:text-zinc-400">{progress}</div>}
             </div>
           )}
-          {!scrape && <p className="text-sm text-zinc-700 dark:text-zinc-200">{sessionResult(run)}</p>}
+          {!scrape && (
+            <p className="text-sm text-zinc-700 dark:text-zinc-200">
+              {comments ? commentsResult(run) : sessionResult(run)}
+            </p>
+          )}
+          {comments && (
+            <Link href={commentsHref(run.id)} className="inline-flex text-xs font-medium underline-offset-2 hover:underline">
+              Open in User comments
+            </Link>
+          )}
 
           {run.login_required && running && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
@@ -1341,6 +1374,7 @@ function History({ runs, viewId, onShow }: { runs: Run[]; viewId?: string; onSho
                   <span className="mt-0.5 block text-xs tabular-nums text-zinc-500 sm:hidden dark:text-zinc-400">
                     <LocalTime epoch={run.started_at} />
                     {run.kind === "scrape" && ` · ${run.new_contacts} new`}
+                    {run.kind === "comments" && ` · ${commentsCount(run)}`}
                   </span>
                 </span>
                 <span className="hidden text-right text-xs tabular-nums text-zinc-500 sm:block dark:text-zinc-400">
@@ -1348,6 +1382,7 @@ function History({ runs, viewId, onShow }: { runs: Run[]; viewId?: string; onSho
                     <LocalTime epoch={run.started_at} />
                   </span>
                   {run.kind === "scrape" && <span className="block">{run.new_contacts} new</span>}
+                  {run.kind === "comments" && <span className="block">{commentsCount(run)}</span>}
                 </span>
                 <StatusPill status={run.status} />
               </button>

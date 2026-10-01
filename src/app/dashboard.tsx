@@ -13,6 +13,8 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { hrefFor } from "@/lib/contact-links";
+
 import ScraperStatus from "./scraper-status";
 
 export type ContactRow = { type: string; value: string };
@@ -34,23 +36,6 @@ const BADGE: Record<string, string> = {
 const AUTO_REFRESH_MS = 30_000;
 
 const keyOf = (c: ContactRow) => `${c.type}:${c.value}`;
-
-// The values come from scraped LinkedIn text, so links are only built for shapes the scraper produces;
-// anything else is shown as plain text.
-function hrefFor({ type, value }: ContactRow): string | null {
-  // strict shape so a value like "a@b.com?subject=..." can't smuggle mailto parameters
-  if (type === "email" && /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/.test(value)) return `mailto:${value}`;
-  if (type === "phone" && /^\+\d{7,15}$/.test(value)) return `tel:${value}`;
-  if (type === "whatsapp") {
-    if (/^\+\d{7,15}$/.test(value)) return `https://wa.me/${value.slice(1)}`;
-    if (/^https:\/\/(chat\.whatsapp\.com|whatsapp\.com|wa\.me)\/[\w/+-]+$/.test(value)) return value;
-  }
-  if (type === "telegram") {
-    if (/^@\w{5,32}$/.test(value)) return `https://t.me/${value.slice(1)}`;
-    if (/^https:\/\/t\.me\/[\w/+-]+$/.test(value)) return value;
-  }
-  return null;
-}
 
 const ICONS: Record<string, string> = {
   all: "m12 2 10 5-10 5L2 7l10-5ZM2 12l10 5 10-5M2 17l10 5 10-5",
@@ -310,8 +295,31 @@ export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
         </button>
       </div>
 
-      <div className="px-3 pb-4">
+      <div className="space-y-2 px-3 pb-4">
         <ScraperStatus onNewData={refresh} />
+        <Link
+          href="/comments"
+          className="flex items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2 text-sm transition-colors hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4 shrink-0"
+            aria-hidden="true"
+          >
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium">User comments</span>
+            <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">
+              Every comment a LinkedIn account wrote
+            </span>
+          </span>
+        </Link>
       </div>
 
       <nav className="px-3" aria-label="Contact type filter">
