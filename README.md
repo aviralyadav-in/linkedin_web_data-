@@ -32,8 +32,9 @@ npm run start
 ## Page par kya hai
 
 **Contacts (`/`)**
-- **Sidebar:** type ke filters (All, Email, Phone, WhatsApp, Telegram) ginti ke saath, naye aaye contacts, Refresh aur dark/light mode.
-- **Commands link:** sidebar mein scraper ki live haalat (Ready / Chal raha hai / API offline). Run naye contacts save kare ya khatam ho, to table apne aap refresh hoti hai.
+- **Sidebar:** type ke filters (All, Email, Phone, WhatsApp, Telegram, LinkedIn) ginti ke saath, naye aaye contacts, Refresh aur dark/light mode. **LinkedIn** = post ya comment mein mention kiye gaye profiles / pages ke URL.
+- **Filter by user:** User comments ke **Only contacts** lookups wale accounts (username) ki list. Kisi account ko chuno to table mein sirf uske lookup (comments, About section, posts) se mile contacts dikhte hain (type filters aur unki ginti bhi usi ke andar); upar `· from <username>` ke saath `×` se filter hatao. CSV bhi wahi rows deta hai (`contacts_<username>.csv`). Yeh list database ki `comment_contacts` table se aati hai.
+- **Commands link:** sidebar mein scraper ki live haalat (Ready / Chal raha hai / API offline). Run (ya User comments ka Only contacts lookup) naye contacts save kare ya khatam ho, to table apne aap refresh hoti hai.
 - **User comments link:** sidebar mein, naye User comments tab ke liye.
 - **Search, CSV download, rows select karna**, aur har row par Open / Copy / Share.
 
@@ -48,11 +49,11 @@ npm run start
 
 **User comments (`/comments`)**
 - Commands aur User comments page ke header mein tabs hain, ek se doosre par jaane ke liye.
-- Kisi LinkedIn account ka username (jaise `satyanadella`) ya profile URL do, aur **Find comments** dabao. `linkedin-2` ka `linkedin_comments.py` us account ke Activity → Comments page se uske saare comments laata hai. Contacts database mein kuch save nahi hota.
-- **Get:** **All comments** (saare comments, post ke saath) ya **Only contacts** (comments mein mile email, phone number, WhatsApp, Telegram, wahi rules jo scraper contacts database ke liye use karta hai; button **Find contacts** ho jaata hai).
+- Kisi LinkedIn account ka username (jaise `satyanadella`) ya profile URL do, aur **Find comments** dabao. `linkedin-2` ka `linkedin_comments.py` us account ke Activity → Comments page se uske saare comments laata hai. Comments database mein save nahi hote; sirf **Only contacts** ke contacts `contacts` table mein bhi jaate hain (neeche dekho).
+- **Get:** **All comments** (saare comments, post ke saath) ya **Only contacts** (email, phone number, WhatsApp, Telegram aur mention kiye gaye LinkedIn profiles, wahi rules jo scraper contacts database ke liye use karta hai; button **Find contacts** ho jaata hai). Only contacts teen jagah dhoondhta hai: account ke **comments**, uski profile ka **About section**, aur uski **saari posts** (har post ke saare comments ke saath). Max comments sirf comments ke liye hai; posts saari padhi jaati hain, lagbhag aadha minute har post.
 - **Max comments** (1 se 5000, sabse naye pehle). **Unlimited** switch on karo to box chhup jaata hai aur account ke saare comments aate hain (bade accounts mein ghante lag sakte hain); off karo to box wapas. LinkedIn yeh list har baar load karte waqt kuch comments chhod deta hai, isliye list hamesha 5 baar padhi jaati hai aur sab jod diye jaate hain.
 - Comments aate-aate dikhte hain: date, comment ka text, reply ho to kis comment ka, aur post (author, text) ke saath **Open comment** / **Open post** links. **Stop** se lookup ruk jaata hai; jitne mile, woh rehte hain.
-- **Only contacts** ke results: har contact ek baar (type badge ke saath), kitne comments mein mila, aur sabse naya comment jisme woh hai (**Open comment** link). Har contact ke saath **Open** (mail / call / WhatsApp / Telegram) aur **Copy** buttons. Contacts database mein ye bhi save nahi hote.
+- **Only contacts** ke results: upar ginti (Contacts, Comments read, Posts read), phir har contact ek baar (type badge ke saath) aur kahan mila: account ke comment mein (kitne comments mein, sabse naya comment, **Open comment** link), uski post ya post ke kisi comment mein (**Open post** link), ya About section mein (**Open profile** link). Har contact ke saath **Open** (mail / call / WhatsApp / Telegram / LinkedIn profile) aur **Copy** buttons. Ye contacts database ke contacts table mein bhi save hote hain (us account ke username ke saath), isliye main page ke table mein bhi dikhte hain.
 - Results mein search, aur **CSV** download (search kiya ho to sirf wahi rows; Only contacts mein contacts ki CSV).
 - **Earlier lookups:** pichhle lookups, click karo to unke comments. Commands page ki Recent runs mein bhi dikhte hain (**Open in User comments** link ke saath).
 
@@ -132,8 +133,8 @@ Bina HTTPS ke dashboard ka password network par saaf padha ja sakta hai.
 | `src/lib/prisma.ts` | Database connection (sirf server par) |
 | `src/lib/scraper.ts` | Scraper API ko call karna, token ke saath (sirf server par) |
 | `src/lib/scraper-types.ts` | Scraper API ke data ke types |
-| `src/lib/contact-links.ts` | Contact ka link (mailto, tel, wa.me, t.me), contacts table aur User comments dono mein |
-| `src/app/page.tsx` | Database se contacts padhta hai |
+| `src/lib/contact-links.ts` | Contact ka link (mailto, tel, wa.me, t.me, LinkedIn profile), contacts table aur User comments dono mein |
+| `src/app/page.tsx` | Database se contacts padhta hai, aur `comment_contacts` se kaunsa contact kis account se aaya |
 | `src/app/dashboard.tsx` | Contacts ka poora UI: sidebar, search, table, CSV |
 | `src/app/scraper-status.tsx` | Sidebar ka Commands link, scraper ki live haalat ke saath |
 | `src/app/commands/page.tsx` | Commands page: API se commands, status aur history laata hai |

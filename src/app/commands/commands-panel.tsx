@@ -122,13 +122,20 @@ export const STATUS: Record<RunStatus, { label: string; className: string }> = {
   interrupted: { label: "Interrupted", className: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" },
 };
 
-export const TYPE_LABEL: Record<string, string> = { email: "Email", phone: "Phone", whatsapp: "WhatsApp", telegram: "Telegram" };
+export const TYPE_LABEL: Record<string, string> = {
+  email: "Email",
+  phone: "Phone",
+  whatsapp: "WhatsApp",
+  telegram: "Telegram",
+  linkedin: "LinkedIn",
+};
 
 export const TYPE_BADGE: Record<string, string> = {
   email: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
   phone: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300",
   whatsapp: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
   telegram: "bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300",
+  linkedin: "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
 };
 
 export const BUTTON =
@@ -932,8 +939,8 @@ function RunForm({
             New run
           </h2>
           <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-            Choose what the scraper reads. Every email, phone number, WhatsApp and Telegram contact it finds is saved
-            to the database right away.
+            Choose what the scraper reads. Every email, phone number, WhatsApp and Telegram contact it finds, and
+            every LinkedIn profile mentioned, is saved to the database right away.
           </p>
         </div>
       </div>

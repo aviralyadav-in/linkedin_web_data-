@@ -55,7 +55,13 @@ export default function ScraperStatus({ onNewData }: { onNewData: () => void }) 
                 : { kind: "idle", text: "Ready to run a command" },
             );
             const run = s.current ?? s.last;
-            const key = run && run.kind === "scrape" ? `${run.id}:${run.new_contacts}:${run.status}` : lastKey;
+            // scrapes, and User comments lookups for contacts: both add to the table
+            const key =
+              run?.kind === "scrape"
+                ? `${run.id}:${run.new_contacts}:${run.status}`
+                : run?.kind === "comments" && run.contacts_only
+                  ? `${run.id}:${run.contacts_found}:${run.status}`
+                  : (lastKey ?? ""); // seen once: a run that starts later refreshes the table even if it ends fast
             if (lastKey !== null && key !== lastKey) onNewDataRef.current();
             lastKey = key;
           }

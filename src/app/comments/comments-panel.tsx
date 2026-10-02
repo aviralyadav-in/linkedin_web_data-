@@ -7,6 +7,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { hrefFor } from "@/lib/contact-links";
 import type {
   CommentContact,
+  ContactPost,
   CommentsResponse,
   CommentsResult,
   Run,
@@ -81,6 +82,7 @@ const withCount = (run: Run, result: CommentsResult | null): Run =>
         ...run,
         comments_found: result.comments_read ?? result.comments.length,
         ...(result.contacts && { contacts_found: result.contacts.length }),
+        ...(result.posts_read !== undefined && { posts_found: result.posts_read }),
       }
     : run;
 
@@ -160,14 +162,55 @@ function downloadCsv(result: CommentsResult, rows: UserComment[]) {
   saveCsv(head, lines, `comments_${result.username}.csv`);
 }
 
-function downloadContactsCsv(result: CommentsResult, rows: CommentContact[], byId: Map<string, UserComment>) {
-  const head = ["Type", "Value", "Comments with it", "Newest comment date", "Comment", "Post author", "Comment link"];
+// where a contact of a lookup was found: the newest of the account's comments with it, the newest of its posts
+// with it (and the text in that post), the About section
+type Sources = { comments: Map<string, UserComment>; posts: Map<string, ContactPost>; about: string };
+
+function sourcesOf(result: CommentsResult | null): Sources {
+  return {
+    comments: new Map((result?.comments ?? []).map((c) => [c.id, c])),
+    posts: new Map((result?.posts ?? []).map((p) => [p.urn, p])),
+    about: result?.about?.text ?? "",
+  };
+}
+
+function foundIn(t: CommentContact, sources: Sources) {
+  const comment = t.comment_id ? sources.comments.get(t.comment_id) : undefined;
+  const post = t.post ? sources.posts.get(t.post) : undefined;
+  const hit = post?.contacts.find((x) => x.type === t.type && x.value === t.value);
+  return { comment, post, hit, about: !!t.about };
+}
+
+function downloadContactsCsv(result: CommentsResult, rows: CommentContact[], sources: Sources) {
+  const head = [
+    "Type",
+    "Value",
+    "Comments with it",
+    "Newest comment date",
+    "Comment",
+    "Post author",
+    "Comment link",
+    "In About",
+    "Posts with it",
+    "Text in the newest post",
+    "Post link",
+  ];
   const lines = rows.map((t) => {
-    const c = byId.get(t.comment_id);
+    const { comment: c, post, hit } = foundIn(t, sources);
     return [
       csvCell(TYPE_LABEL[t.type] ?? t.type),
       valueCell(t.value),
-      ...[String(t.count), c ? (c.date ?? c.time) : "", c?.text, c?.post.author, c?.url].map(csvCell),
+      ...[
+        String(t.count),
+        c ? (c.date ?? c.time) : "",
+        c?.text,
+        c?.post.author,
+        c?.url,
+        t.about ? "yes" : "",
+        String(t.posts ?? 0),
+        hit?.text,
+        post?.url,
+      ].map(csvCell),
     ].join(",");
   });
   saveCsv(head, lines, `contacts_${result.username}.csv`);
@@ -175,7 +218,8 @@ function downloadContactsCsv(result: CommentsResult, rows: CommentContact[], byI
 
 // About 10 comments load per scroll, each taking ~3.5 s, for every pass; plus opening LinkedIn.
 function roughTime(limit: number, passes: number) {
-  const minutes = Math.max(1, Math.round((20 + passes * Math.ceil(limit / 10) * 3.5) / 60));
+  const seconds = 20 + passes * Math.ceil(limit / 10) * 3.5;
+  const minutes = Math.max(1, Math.round(seconds / 60));
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 
@@ -596,7 +640,7 @@ function LookupForm({
           </h2>
           <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
             Reads the account&apos;s Activity → Comments page on LinkedIn: each comment, when it was written and the
-            post it is on. Nothing is saved to the contacts database. Like any profile visit, the account may see it
+            post it is on. Comments aren&apos;t saved to the database. Like any profile visit, the account may see it
             under &quot;Who viewed your profile&quot;.
           </p>
         </div>
@@ -652,7 +696,7 @@ function LookupForm({
                 {
                   value: "contacts",
                   title: "Only contacts",
-                  text: "Just the email, phone number, WhatsApp and Telegram details in the comments.",
+                  text: "Email, phone, WhatsApp, Telegram and mentioned LinkedIn profiles: from the comments, the About section and all of the account's posts with their comments. Also added to the contacts table.",
                 },
               ] as const
             ).map((option) => (
@@ -683,7 +727,7 @@ function LookupForm({
           </div>
         </fieldset>
 
-        <div className="sm:max-w-xs">
+        <div>
           <div className="flex items-center justify-between gap-3">
             {unlimited ? (
               <span className="text-sm font-medium">Max comments</span>
@@ -700,7 +744,7 @@ function LookupForm({
           </div>
           {unlimited ? (
             <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Every comment the account has, newest first.
+              {contacts ? "Every comment and every post the account has." : "Every comment the account has, newest first."}
             </p>
           ) : (
             <>
@@ -714,14 +758,14 @@ function LookupForm({
                 onChange={(e) => setLimit(e.target.value)}
                 aria-invalid={!limitOk}
                 aria-describedby="limit-hint"
-                className={`mt-1.5 block w-full rounded-lg border bg-white px-3 py-2 text-sm tabular-nums outline-hidden focus:ring-2 focus:ring-zinc-300 dark:bg-zinc-900 dark:focus:ring-zinc-700 ${
+                className={`mt-1.5 block w-full rounded-lg border bg-white px-3 py-2 text-sm tabular-nums outline-hidden focus:ring-2 focus:ring-zinc-300 sm:max-w-xs dark:bg-zinc-900 dark:focus:ring-zinc-700 ${
                   limitOk ? "border-zinc-200 dark:border-zinc-700" : "border-red-400 dark:border-red-700"
                 }`}
               />
               <p id="limit-hint" className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">
                 {limitOk ? (
                   contacts ? (
-                    "The newest comments, searched for contacts."
+                    "The newest comments. The account's posts are all read, whatever this number is."
                   ) : (
                     "Newest first."
                   )
@@ -738,7 +782,8 @@ function LookupForm({
           and the results are combined.
           {unlimited
             ? " With Unlimited the whole list is read each time: about 3 minutes for every 100 comments the account has."
-            : limitOk && ` This lookup takes up to ~${roughTime(limitN, PASSES)}.`}
+            : limitOk && ` ${contacts ? "The comments take" : "This lookup takes"} up to ~${roughTime(limitN, PASSES)}.`}
+          {contacts && " Then every post of the account is opened with all its comments: about half a minute per post."}
         </p>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
@@ -786,17 +831,19 @@ function Results({
       ),
     );
   }, [comments, query]);
-  // Only contacts: the contacts, each shown with the newest comment it is in
+  // Only contacts: the contacts, each shown with where it was found
   const contacts = useMemo(() => result?.contacts ?? [], [result]);
-  const byId = useMemo(() => new Map(comments.map((c) => [c.id, c])), [comments]);
+  const sources = useMemo(() => sourcesOf(result), [result]);
   const filteredContacts = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return contacts;
     return contacts.filter((t) => {
-      const c = byId.get(t.comment_id);
-      return [t.value, TYPE_LABEL[t.type] ?? t.type, c?.text, c?.post.author].some((s) => s?.toLowerCase().includes(q));
+      // the text its card shows: the account's comment, else the post or comment on its post, else the About section
+      const { comment: c, hit, about } = foundIn(t, sources);
+      const shown = c ? [c.text, c.post.author] : hit ? [hit.text, hit.author] : about ? [sources.about] : [];
+      return [t.value, TYPE_LABEL[t.type] ?? t.type, ...shown].some((s) => s?.toLowerCase().includes(q));
     });
-  }, [contacts, byId, query]);
+  }, [contacts, sources, query]);
   const pageKey = `${view?.id}|${query}`;
   const shown = page.key === pageKey ? page.n : PAGE;
 
@@ -827,6 +874,8 @@ function Results({
   const count = result ? (result.comments_read ?? result.comments.length) : (lookup?.comments_found ?? 0);
   const contactsMode = contactsOnly(lookup, result);
   const contactCount = result?.contacts ? result.contacts.length : (lookup?.contacts_found ?? 0);
+  // posts of the account read; undefined from a scraper that only reads the comments
+  const postCount = result ? result.posts_read : lookup?.posts_found;
   // what the list shows: the comments, or with Only contacts the contacts found in them
   const total = contactsMode ? contacts.length : comments.length;
   const matches = contactsMode ? filteredContacts.length : filtered.length;
@@ -850,7 +899,7 @@ function Results({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className={EYEBROW}>
-              {running ? "Collecting now" : contactsMode ? "Contacts in comments by" : "Comments by"}
+              {running ? "Collecting now" : contactsMode ? "Contacts found for" : "Comments by"}
             </div>
             <h2 className="mt-1 truncate text-base font-semibold">
               {name ?? (username || (view.gone ? "Lookup not found" : "Loading..."))}
@@ -871,7 +920,11 @@ function Results({
         </div>
 
         {lookup && (
-          <dl className={`grid gap-2 text-xs ${contactsMode ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3"}`}>
+          <dl
+            className={`grid gap-2 text-xs ${
+              !contactsMode ? "grid-cols-3" : postCount === undefined ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2 sm:grid-cols-5"
+            }`}
+          >
             {contactsMode && (
               <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
                 <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
@@ -888,6 +941,20 @@ function Results({
               </dt>
               <dd className="mt-0.5 font-semibold tabular-nums">{count}</dd>
             </div>
+            {contactsMode && postCount !== undefined && (
+              <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
+                <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
+                  <Icon name="flag" className="h-3 w-3" />
+                  Posts read
+                </dt>
+                <dd className="mt-0.5 font-semibold tabular-nums">
+                  {postCount}
+                  {typeof result?.posts_total === "number" && result.posts_total > postCount && (
+                    <span className="font-normal text-zinc-500 dark:text-zinc-400"> of {result.posts_total}</span>
+                  )}
+                </dd>
+              </div>
+            )}
             <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
               <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                 <Icon name="clock" className="h-3 w-3" />
@@ -955,7 +1022,7 @@ function Results({
           <button
             type="button"
             onClick={() =>
-              contactsMode ? downloadContactsCsv(result, filteredContacts, byId) : downloadCsv(result, filtered)
+              contactsMode ? downloadContactsCsv(result, filteredContacts, sources) : downloadCsv(result, filtered)
             }
             className={SECONDARY}
           >
@@ -976,7 +1043,7 @@ function Results({
             {contactsMode
               ? filteredContacts
                   .slice(0, shown)
-                  .map((t) => <ContactCard key={`${t.type}:${t.value}`} contact={t} comment={byId.get(t.comment_id)} />)
+                  .map((t) => <ContactCard key={`${t.type}:${t.value}`} contact={t} sources={sources} profile={profile} />)
               : filtered.slice(0, shown).map((c) => <CommentCard key={c.id} comment={c} />)}
           </ul>
           {matches > shown && (
@@ -1092,8 +1159,17 @@ const ACTION_IDLE =
 const ACTION_DONE =
   "border-emerald-300 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-400";
 
-// One contact found in the comments, with the newest comment it is in.
-function ContactCard({ contact: t, comment: c }: { contact: CommentContact; comment?: UserComment }) {
+// One contact a lookup found, with where: the newest of the account's comments that has it, or else the newest of
+// its posts that has it (in the post or a comment on it), or else the About section; the other places are named.
+function ContactCard({
+  contact: t,
+  sources,
+  profile,
+}: {
+  contact: CommentContact;
+  sources: Sources;
+  profile: string | null;
+}) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timerRef.current), []);
@@ -1110,7 +1186,13 @@ function ContactCard({ contact: t, comment: c }: { contact: CommentContact; comm
   }
 
   const href = hrefFor(t);
+  const { comment: c, post, hit, about } = foundIn(t, sources);
   const url = safeUrl(c?.url);
+  const postUrl = safeUrl(post?.url);
+  const posts = t.posts ?? 0;
+  const postDate = post?.date ? new Date(post.date) : null;
+  // the text the contact is in, when there is no comment of the account to show
+  const text = c ? null : hit ? hit.text : about ? sources.about : null;
   return (
     <li className="px-4 py-3.5 sm:px-5">
       <div className="flex items-start gap-3">
@@ -1134,6 +1216,8 @@ function ContactCard({ contact: t, comment: c }: { contact: CommentContact; comm
                 <span className="tabular-nums">{commentDate(c)}</span>
                 {t.count > 1 && <span>· in {t.count} comments</span>}
                 {c.post.author && <span className="min-w-0 truncate">· on a post by {c.post.author}</span>}
+                {about && <span>· in the About section</span>}
+                {posts > 0 && <span>· on {posts === 1 ? "1 of their posts" : `${posts} of their posts`}</span>}
                 {url && (
                   <a
                     href={url}
@@ -1144,6 +1228,57 @@ function ContactCard({ contact: t, comment: c }: { contact: CommentContact; comm
                     Open comment
                     <Icon name="external" className="h-3 w-3" />
                   </a>
+                )}
+              </div>
+            </>
+          )}
+          {!c && (text || about || post) && (
+            <>
+              {text && (
+                <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed break-words text-zinc-600 dark:text-zinc-400">
+                  {text}
+                </p>
+              )}
+              <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
+                {post ? (
+                  <>
+                    {postDate && !Number.isNaN(postDate.getTime()) && (
+                      <span className="tabular-nums">
+                        {postDate.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })} ·
+                      </span>
+                    )}
+                    <span className="min-w-0 truncate">
+                      {hit?.comment ? `In a comment${hit.author ? ` by ${hit.author}` : ""} on their post` : "In their post"}
+                    </span>
+                    {posts > 1 && <span>· on {posts} of their posts</span>}
+                    {about && <span>· in the About section</span>}
+                    {postUrl && (
+                      <a
+                        href={postUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-medium hover:underline"
+                      >
+                        Open post
+                        <Icon name="external" className="h-3 w-3" />
+                      </a>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span>In the About section</span>
+                    {profile && (
+                      <a
+                        href={profile}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-medium hover:underline"
+                      >
+                        Open profile
+                        <Icon name="external" className="h-3 w-3" />
+                      </a>
+                    )}
+                  </>
                 )}
               </div>
             </>
@@ -1295,7 +1430,9 @@ function Lookups({
                     <span className="block text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
                       <LocalTime epoch={run.started_at} /> ·{" "}
                       {run.contacts_only
-                        ? `${run.contacts_found ?? 0} contacts · ${run.comments_found ?? 0} comments read`
+                        ? `${run.contacts_found ?? 0} contacts · ${run.comments_found ?? 0} comments${
+                            run.posts_found === undefined ? "" : ` · ${run.posts_found} posts`
+                          } read`
                         : `${run.comments_found ?? 0} comments`}
                     </span>
                   </span>

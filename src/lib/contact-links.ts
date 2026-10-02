@@ -8,6 +8,9 @@ export function hrefFor({ type, value }: { type: string; value: string }): strin
     if (/^\+\d{7,15}$/.test(value)) return `https://wa.me/${value.slice(1)}`;
     if (/^https:\/\/(chat\.whatsapp\.com|whatsapp\.com|wa\.me)\/[\w/+-]+$/.test(value)) return value;
   }
+  if (type === "linkedin" && /^https:\/\/www\.linkedin\.com\/(in|company|school|showcase)\/[^/?#\s]+\/$/.test(value)) {
+    return value;
+  }
   if (type === "telegram") {
     if (/^@\w{5,32}$/.test(value)) return `https://t.me/${value.slice(1)}`;
     if (/^https:\/\/t\.me\/[\w/+-]+$/.test(value)) return value;

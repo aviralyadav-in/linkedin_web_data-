@@ -10,7 +10,7 @@ datasource db {
   provider = "postgresql"
 }
 
-/// type is one of: telegram, email, phone, whatsapp
+/// type is one of: telegram, email, phone, whatsapp, linkedin
 model Contact {
   type  String
   value String

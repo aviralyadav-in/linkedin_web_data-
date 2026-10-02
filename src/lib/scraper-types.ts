@@ -49,14 +49,15 @@ export type Run = {
   passes?: number;
   contacts_only?: boolean; // only the contact details in the comments
   comments_found?: number; // comments read
-  contacts_found?: number; // contacts_only runs: contacts found in them
+  contacts_found?: number; // contacts_only runs: contacts found
+  posts_found?: number; // contacts_only runs: posts of the account read (missing from an older API)
 };
 
 export type ScraperStatus = { busy: boolean; current: Run | null; last: Run | null };
 
 export type RunLog = { run: Run; lines: string[]; next: number };
 
-export type ContactType = "email" | "phone" | "whatsapp" | "telegram";
+export type ContactType = "email" | "phone" | "whatsapp" | "telegram" | "linkedin";
 
 // One comment as linkedin_comments.py saves it
 export type UserComment = {
@@ -70,8 +71,28 @@ export type UserComment = {
   contacts?: { type: ContactType; value: string }[]; // contacts mode only
 };
 
-// A contact found in the comments (contacts mode): from the newest comment that has it, and in how many
-export type CommentContact = { type: ContactType; value: string; comment_id: string; count: number };
+// A contact a lookup found (contacts mode), and where: in how many of the account's comments (and the newest of
+// them), in the profile's About section, in how many of the account's posts (and the newest of them)
+export type CommentContact = {
+  type: ContactType;
+  value: string;
+  comment_id: string | null;
+  count: number;
+  about?: boolean;
+  posts?: number;
+  post?: string | null; // its urn
+};
+
+// One of the account's posts that has contact details (contacts mode): each contact once, with the text it is in
+// (the post itself, or the first comment on it that has it)
+export type ContactPost = {
+  urn: string;
+  url: string;
+  date: string | null;
+  text: string;
+  comments: number; // comments read on it
+  contacts: { type: ContactType; value: string; comment: boolean; author: string; text: string }[];
+};
 
 export type CommentsResult = {
   username: string;
@@ -86,6 +107,11 @@ export type CommentsResult = {
   comments_read?: number; // comments read; in contacts mode `comments` keeps only the ones with contacts
   comments: UserComment[];
   contacts?: CommentContact[]; // contacts mode only
+  // contacts mode, from a scraper that also reads the About section and the account's posts
+  about?: { text: string; contacts: { type: ContactType; value: string }[] } | null; // null: not read yet
+  posts_read?: number; // fewer than posts_total at the end: some posts didn't open
+  posts_total?: number | null; // the posts the account has (all of them are read); null: not listed yet
+  posts?: ContactPost[];
 };
 
 export type CommentsResponse = { run: Run; result: CommentsResult | null };

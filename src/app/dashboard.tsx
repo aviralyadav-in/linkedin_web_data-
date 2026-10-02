@@ -18,12 +18,15 @@ import { hrefFor } from "@/lib/contact-links";
 import ScraperStatus from "./scraper-status";
 
 export type ContactRow = { type: string; value: string };
+// a contact found in this LinkedIn account's comments (User comments, Only contacts)
+export type SourceRow = ContactRow & { username: string };
 
 const TYPES = [
   { key: "email", label: "Email", icon: "mail" },
   { key: "phone", label: "Phone", icon: "phone" },
   { key: "whatsapp", label: "WhatsApp", icon: "chat" },
   { key: "telegram", label: "Telegram", icon: "send" },
+  { key: "linkedin", label: "LinkedIn", icon: "at" }, // a profile or page mentioned in a post or comment
 ] as const;
 
 const BADGE: Record<string, string> = {
@@ -31,6 +34,7 @@ const BADGE: Record<string, string> = {
   phone: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300",
   whatsapp: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
   telegram: "bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300",
+  linkedin: "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
 };
 
 const AUTO_REFRESH_MS = 30_000;
@@ -44,6 +48,7 @@ const ICONS: Record<string, string> = {
     "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z",
   chat: "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5Z",
   send: "m22 2-7 20-4-9-9-4 20-7Zm0 0L11 13",
+  at: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm0-4v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8",
   search: "m21 21-4.35-4.35M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z",
   refresh: "M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6",
   sun: "M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0-16v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42",
@@ -115,9 +120,10 @@ function toggleTheme() {
   }
 }
 
-export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
+export default function Dashboard({ contacts, sources }: { contacts: ContactRow[]; sources: SourceRow[] }) {
   const router = useRouter();
   const [type, setType] = useState("all");
+  const [user, setUser] = useState(""); // "" = no user filter (a username has at least 3 characters)
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [feedback, setFeedback] = useState<{ key: string; kind: "copied" | "shared" } | null>(null);
@@ -176,18 +182,37 @@ export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
     return () => clearInterval(id);
   }, [autoRefresh, router, startRefresh]);
 
+  // the accounts whose comments contacts came from, each with the keys of its contacts
+  const users = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const s of sources) {
+      let keys = m.get(s.username);
+      if (!keys) m.set(s.username, (keys = new Set()));
+      keys.add(keyOf(s));
+    }
+    return m;
+  }, [sources]);
+  // a user that no longer has contacts (e.g. after a refresh) means no user filter
+  const activeUser = users.has(user) ? user : "";
+
+  // the contacts the user filter leaves; the type filter and its counts work within them
+  const scoped = useMemo(() => {
+    const keys = users.get(activeUser);
+    return keys ? contacts.filter((c) => keys.has(keyOf(c))) : contacts;
+  }, [contacts, users, activeUser]);
+
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const row of contacts) c[row.type] = (c[row.type] ?? 0) + 1;
+    for (const row of scoped) c[row.type] = (c[row.type] ?? 0) + 1;
     return c;
-  }, [contacts]);
+  }, [scoped]);
 
   const rows = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
-    return contacts.filter(
+    return scoped.filter(
       (row) => (type === "all" || row.type === type) && (!q || row.value.toLowerCase().includes(q)),
     );
-  }, [contacts, type, deferredQuery]);
+  }, [scoped, type, deferredQuery]);
 
   function flash(key: string, kind: "copied" | "shared") {
     // one indicator shows at a time, so cancelling the previous timer means a quick
@@ -274,11 +299,12 @@ export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
   }
 
   const filters = [
-    { key: "all", label: "All", icon: "all" as const, count: contacts.length },
+    { key: "all", label: "All", icon: "all" as const, count: scoped.length },
     ...TYPES.map((t) => ({ ...t, count: counts[t.key] ?? 0 })),
   ];
 
-  const sidebar = (
+  // rendered twice (desktop aside and mobile drawer), so its ids get a prefix per copy
+  const sidebar = (p: string) => (
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="flex items-center justify-between px-5 py-5">
         <div>
@@ -359,6 +385,36 @@ export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
         </ul>
       </nav>
 
+      <div className="px-3 pt-5">
+        <label
+          htmlFor={`${p}-user-filter`}
+          className="block px-2 pb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
+        >
+          Filter by user
+        </label>
+        <select
+          id={`${p}-user-filter`}
+          value={activeUser}
+          onChange={(e) => setUser(e.target.value)}
+          disabled={users.size === 0}
+          aria-describedby={`${p}-user-filter-hint`}
+          className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:border-zinc-500"
+        >
+          <option value="">All contacts</option>
+          {/* already in order (page.tsx reads them ORDER BY username), so server and browser render the same */}
+          {[...users].map(([name, keys]) => (
+            <option key={name} value={name}>
+              {name} ({keys.size})
+            </option>
+          ))}
+        </select>
+        <p id={`${p}-user-filter-hint`} className="mt-1.5 px-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {users.size
+            ? "Contacts found in that account's comments (User comments, Only contacts)."
+            : "Accounts show up here after an Only contacts lookup on User comments."}
+        </p>
+      </div>
+
       <div className="mt-auto border-t border-zinc-200 px-4 py-4 dark:border-zinc-800">
         <div className="flex items-center gap-2">
           <button
@@ -402,7 +458,7 @@ export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
     <div className="flex min-h-dvh w-full">
       {/* desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh w-72 shrink-0 border-r border-zinc-200 bg-white lg:block dark:border-zinc-800 dark:bg-zinc-950">
-        {sidebar}
+        {sidebar("desktop")}
       </aside>
 
       {/* mobile drawer: inert while closed so its off-screen controls can't take focus */}
@@ -425,7 +481,7 @@ export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        {sidebar}
+        {sidebar("mobile")}
       </aside>
 
       <main className="min-w-0 flex-1">
@@ -457,7 +513,7 @@ export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
             </div>
             <button
               type="button"
-              onClick={() => downloadCsv(rows, "contacts.csv")}
+              onClick={() => downloadCsv(rows, activeUser ? `contacts_${activeUser}.csv` : "contacts.csv")}
               disabled={rows.length === 0}
               className="hidden items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium hover:border-zinc-400 disabled:opacity-50 sm:flex dark:border-zinc-700 dark:hover:border-zinc-500"
               title="Download the filtered rows as CSV"
@@ -467,11 +523,29 @@ export default function Dashboard({ contacts }: { contacts: ContactRow[] }) {
             </button>
           </div>
           <div className="mt-2 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
-            <span className="tabular-nums">
-              {rows.length} / {contacts.length} contacts
+            <span className="flex min-w-0 items-center gap-1.5 tabular-nums">
+              <span className="shrink-0 whitespace-nowrap">
+                {rows.length} / {contacts.length} contacts
+              </span>
+              {activeUser && (
+                <>
+                  <span className="truncate">
+                    · from <span className="font-medium text-zinc-700 dark:text-zinc-200">{activeUser}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setUser("")}
+                    className="rounded p-0.5 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                    aria-label="Show all contacts"
+                    title="Show all contacts"
+                  >
+                    <Icon name="x" className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              )}
             </span>
             {updatedAt && (
-              <span className="tabular-nums">Updated {updatedAt.toLocaleTimeString()}</span>
+              <span className="shrink-0 whitespace-nowrap tabular-nums">Updated {updatedAt.toLocaleTimeString()}</span>
             )}
           </div>
           {selectedRows.length > 0 && (
