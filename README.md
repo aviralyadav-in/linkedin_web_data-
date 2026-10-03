@@ -32,8 +32,8 @@ npm run start
 ## What is on the page
 
 **Contacts (`/`)**
-- **Sidebar:** filters by type (All, Email, Phone, WhatsApp, Telegram, LinkedIn) with counts, newly added contacts, Refresh, and dark/light mode. **LinkedIn** = URLs of profiles / pages mentioned in a post or comment.
-- **Filter by user:** a list of the accounts (usernames) that had **Only contacts** lookups on User comments. Pick an account and the table shows only the contacts found by its lookup (comments, About section, posts) (the type filters and their counts also work only within it); remove the filter with the `×` next to `· from <username>` at the top. The CSV gives the same rows (`contacts_<username>.csv`). This list comes from the database's `comment_contacts` table.
+- **Sidebar:** filters by type (All, Email, Phone, WhatsApp, Telegram, LinkedIn) with counts, newly added contacts, Refresh, and dark/light mode. In **All**, the table lists the rows in this same order (Email first, LinkedIn last). **LinkedIn** = URLs of profiles / pages mentioned in a post or comment.
+- **Filter by user:** a dropdown next to the search box above the table, listing the accounts (usernames) that had **Only contacts** lookups on User comments. Pick an account and the table shows only the contacts found by its lookup (comments, About section, posts) (the type filters and their counts also work only within it); remove the filter with the `×` next to `· from <username>` at the top. The CSV gives the same rows (`contacts_<username>.csv`). This list comes from the database's `comment_contacts` table.
 - **Commands link:** in the sidebar, with the scraper's live status (Ready / Running / API offline). When a run (or a User comments Only contacts lookup) saves new contacts or finishes, the table refreshes by itself.
 - **User comments link:** in the sidebar, for the new User comments tab.
 - **Search, CSV download, selecting rows**, and Open / Copy / Share / Delete on each row.
@@ -148,6 +148,8 @@ Without HTTPS, the dashboard password can be read in plain text on the network.
 | `src/app/api/scraper/[...path]/route.ts` | The path from the browser to the scraper API (allowed calls only) |
 | `src/proxy.ts` | Optional username/password (`DASHBOARD_USER` / `DASHBOARD_PASSWORD`) |
 | `src/lib/dashboard-auth.ts` | Checks that username/password, for both `proxy.ts` and Delete |
+| `src/components/ui/select.tsx` | shadcn/ui Select (Radix UI), used for Filter by user |
+| `src/lib/utils.ts` | shadcn's `cn()` class helper |
 | `src/app/loading.tsx`, `src/app/commands/loading.tsx`, `src/app/comments/loading.tsx` | Skeleton while loading |
 | `src/app/error.tsx`, `src/app/not-found.tsx` | Message when the database is down, and the 404 page |
 

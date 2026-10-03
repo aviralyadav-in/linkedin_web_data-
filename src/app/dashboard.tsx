@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hrefFor } from "@/lib/contact-links";
 
 import { deleteContacts } from "./actions";
@@ -29,6 +30,9 @@ const TYPES = [
   { key: "telegram", label: "Telegram", icon: "send" },
   { key: "linkedin", label: "LinkedIn", icon: "at" }, // a profile or page mentioned in a post or comment
 ] as const;
+
+// the table's All view groups the rows in this same order: email first, LinkedIn last
+const TYPE_RANK = new Map<string, number>(TYPES.map((t, i) => [t.key, i]));
 
 const BADGE: Record<string, string> = {
   email: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
@@ -314,9 +318,11 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
 
   const rows = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
-    return scoped.filter(
-      (row) => (type === "all" || row.type === type) && (!q || row.value.toLowerCase().includes(q)),
-    );
+    return scoped
+      .filter((row) => (type === "all" || row.type === type) && (!q || row.value.toLowerCase().includes(q)))
+      // the sidebar's type order (email first, LinkedIn last); the sort is stable, so within a
+      // type the rows keep their order
+      .sort((a, b) => (TYPE_RANK.get(a.type) ?? TYPES.length) - (TYPE_RANK.get(b.type) ?? TYPES.length));
   }, [scoped, type, deferredQuery]);
 
   function flash(key: string, kind: "copied" | "shared") {
@@ -459,8 +465,8 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
     ...TYPES.map((t) => ({ ...t, count: counts[t.key] ?? 0 })),
   ];
 
-  // rendered twice (desktop aside and mobile drawer), so its ids get a prefix per copy
-  const sidebar = (p: string) => (
+  // rendered twice (desktop aside and mobile drawer)
+  const sidebar = () => (
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="flex items-center justify-between px-5 py-5">
         <div>
@@ -541,36 +547,6 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
         </ul>
       </nav>
 
-      <div className="px-3 pt-5">
-        <label
-          htmlFor={`${p}-user-filter`}
-          className="block px-2 pb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
-        >
-          Filter by user
-        </label>
-        <select
-          id={`${p}-user-filter`}
-          value={activeUser}
-          onChange={(e) => setUser(e.target.value)}
-          disabled={users.size === 0}
-          aria-describedby={`${p}-user-filter-hint`}
-          className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:border-zinc-500"
-        >
-          <option value="">All contacts</option>
-          {/* already in order (page.tsx reads them ORDER BY username), so server and browser render the same */}
-          {[...users].map(([name, keys]) => (
-            <option key={name} value={name}>
-              {name} ({keys.size})
-            </option>
-          ))}
-        </select>
-        <p id={`${p}-user-filter-hint`} className="mt-1.5 px-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-          {users.size
-            ? "Contacts found in that account's comments (User comments, Only contacts)."
-            : "Accounts show up here after an Only contacts lookup on User comments."}
-        </p>
-      </div>
-
       <div className="mt-auto border-t border-zinc-200 px-4 py-4 dark:border-zinc-800">
         <div className="flex items-center gap-2">
           <button
@@ -614,7 +590,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
     <div className="flex min-h-dvh w-full">
       {/* desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh w-72 shrink-0 border-r border-zinc-200 bg-white lg:block dark:border-zinc-800 dark:bg-zinc-950">
-        {sidebar("desktop")}
+        {sidebar()}
       </aside>
 
       {/* mobile drawer: inert while closed so its off-screen controls can't take focus */}
@@ -637,7 +613,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        {sidebar("mobile")}
+        {sidebar()}
       </aside>
 
       <main className="min-w-0 flex-1">
@@ -667,6 +643,35 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
                 className="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:focus:border-zinc-500"
               />
             </div>
+            {/* an item's value can't be "" (Radix), so "all" stands for no filter and usernames get a "u:"
+                prefix (there can be an account literally called "all") */}
+            <Select
+              value={activeUser ? `u:${activeUser}` : "all"}
+              onValueChange={(v) => setUser(v === "all" ? "" : v.slice(2))}
+              disabled={users.size === 0}
+            >
+              <SelectTrigger
+                id="user-filter"
+                aria-label="Filter by user"
+                title={
+                  users.size
+                    ? "Filter by user: contacts found in that account's comments (User comments, Only contacts)."
+                    : "Filter by user: accounts show up here after an Only contacts lookup on User comments."
+                }
+                className="w-36 shrink-0 sm:w-64"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All contacts</SelectItem>
+                {/* already in order (page.tsx reads them ORDER BY username), so server and browser render the same */}
+                {[...users].map(([name, keys]) => (
+                  <SelectItem key={name} value={`u:${name}`}>
+                    {name} ({keys.size})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <button
               type="button"
               onClick={() => downloadCsv(rows, activeUser ? `contacts_${activeUser}.csv` : "contacts.csv")}

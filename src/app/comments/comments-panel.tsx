@@ -530,7 +530,7 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
         </div>
       )}
 
-      <div className="w-full px-4 py-6 sm:px-6">
+      <div className="min-h-[calc(100dvh-3.75rem)] w-full bg-zinc-100/60 px-4 py-6 sm:px-6 sm:py-8 dark:bg-zinc-900/20">
         {!configured ? (
           <Notice title="The scraper API isn't set up">
             Add <Code>SCRAPER_API_URL</Code> and <Code>SCRAPER_API_TOKEN</Code> to <Code>linkedin-data/.env</Code> (the
@@ -539,7 +539,7 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
         ) : (
           // On a phone: form, results, earlier lookups. On a wide screen the results take the right side; the
           // auto/1fr rows keep the lookups right under the form however long the results get.
-          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:grid-rows-[auto_1fr]">
+          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:grid-rows-[auto_1fr] lg:gap-7">
             <div className="min-w-0 space-y-6">
               {link === "offline" && (
                 <Notice title="Can't reach the scraper API">
@@ -629,13 +629,13 @@ function LookupForm({
   }
 
   return (
-    <form onSubmit={submit} className={CARD} aria-labelledby="lookup-title">
-      <div className="flex items-start gap-3 border-b border-zinc-200 px-4 py-4 sm:px-5 dark:border-zinc-800">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
+    <form onSubmit={submit} className={`${CARD} shadow-sm`} aria-labelledby="lookup-title">
+      <div className="flex items-start gap-3 border-b border-zinc-200 bg-gradient-to-r from-zinc-50 to-transparent px-4 py-4 sm:px-5 dark:border-zinc-800 dark:from-zinc-900/60">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-600 text-white shadow-md shadow-zinc-900/20 dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900">
           <Icon name="message" />
         </span>
         <div className="min-w-0">
-          <h2 id="lookup-title" className="text-sm font-semibold">
+          <h2 id="lookup-title" className="text-base font-semibold tracking-tight">
             Find comments
           </h2>
           <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
@@ -704,7 +704,7 @@ function LookupForm({
                 key={option.value}
                 className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors has-focus-visible:ring-2 has-focus-visible:ring-zinc-400 ${
                   mode === option.value
-                    ? "border-zinc-900 bg-zinc-50 dark:border-zinc-100 dark:bg-zinc-900"
+                    ? "border-zinc-900 bg-zinc-50 shadow-sm ring-1 ring-zinc-900 dark:border-zinc-100 dark:bg-zinc-900 dark:ring-zinc-100"
                     : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
                 }`}
               >
@@ -788,7 +788,11 @@ function LookupForm({
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
           {blockedReason && <p className="text-xs text-zinc-500 sm:mr-auto dark:text-zinc-400">{blockedReason}</p>}
-          <button type="submit" disabled={blocked || !name || !limitOk} className={`${PRIMARY} sm:min-w-40`}>
+          <button
+            type="submit"
+            disabled={blocked || !name || !limitOk}
+            className={`${PRIMARY} shadow-md shadow-zinc-900/15 sm:min-w-44`}
+          >
             <Icon name="search" />
             {starting ? "Starting..." : contacts ? "Find contacts" : "Find comments"}
           </button>
@@ -849,12 +853,14 @@ function Results({
 
   if (!view) {
     return (
-      <div className={`${CARD} p-5`}>
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Icon name="message" />
+      <div className={`${CARD} flex flex-col items-center px-6 py-14 text-center shadow-sm`}>
+        <span className="grid h-12 w-12 place-items-center rounded-full bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+          <Icon name="message" className="h-5 w-5" />
+        </span>
+        <p className="mt-4 text-sm font-semibold">
           {link === "online" ? "No lookups yet" : link === "token" ? "Lookups can't be loaded" : "Waiting for the scraper API"}
-        </div>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+        </p>
+        <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
           {link === "online"
             ? "Enter a username or profile URL and press Find comments. The comments show up here as they are found."
             : link === "token"
@@ -883,7 +889,12 @@ function Results({
   const elsewhere = current?.kind === "comments" && current.status === "running" && !isCurrent ? current : null;
 
   return (
-    <div className={`${CARD} overflow-hidden`}>
+    <div className={`${CARD} overflow-hidden shadow-sm`}>
+      {running && (
+        <div className="h-0.5 w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800" aria-hidden="true">
+          <div className="h-full w-1/3 rounded-full bg-zinc-500 animate-slide-x dark:bg-zinc-400" />
+        </div>
+      )}
       {elsewhere && (
         <button
           type="button"
@@ -895,13 +906,20 @@ function Results({
           <span className="underline underline-offset-2">Show it</span>
         </button>
       )}
-      <div className="space-y-4 p-4 sm:p-5">
+      <div className="space-y-4 bg-gradient-to-b from-zinc-50/90 to-transparent p-4 sm:p-5 dark:from-zinc-900/50">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          {/* a div, not a span: the tests (and styles) treat span.rounded-full as a badge/status pill */}
+          <div
+            aria-hidden="true"
+            className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gradient-to-br from-zinc-900 to-zinc-600 text-base font-semibold text-white uppercase shadow-md shadow-zinc-900/20 ring-2 ring-white dark:from-zinc-100 dark:to-zinc-400 dark:text-zinc-900 dark:ring-zinc-800"
+          >
+            {(name ?? username).trim().charAt(0) || <Icon name="message" className="h-4 w-4" />}
+          </div>
+          <div className="min-w-0 flex-1">
             <div className={EYEBROW}>
               {running ? "Collecting now" : contactsMode ? "Contacts found for" : "Comments by"}
             </div>
-            <h2 className="mt-1 truncate text-base font-semibold">
+            <h2 className="mt-0.5 truncate text-base font-semibold">
               {name ?? (username || (view.gone ? "Lookup not found" : "Loading..."))}
             </h2>
             {profile && (
@@ -926,28 +944,28 @@ function Results({
             }`}
           >
             {contactsMode && (
-              <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
+              <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
                 <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                   <Icon name="users" className="h-3 w-3" />
                   Contacts
                 </dt>
-                <dd className="mt-0.5 font-semibold tabular-nums">{contactCount}</dd>
+                <dd className="mt-1 text-lg font-semibold tabular-nums">{contactCount}</dd>
               </div>
             )}
-            <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
+            <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
               <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                 <Icon name="message" className="h-3 w-3" />
                 {contactsMode ? "Comments read" : "Comments"}
               </dt>
-              <dd className="mt-0.5 font-semibold tabular-nums">{count}</dd>
+              <dd className="mt-1 text-lg font-semibold tabular-nums">{count}</dd>
             </div>
             {contactsMode && postCount !== undefined && (
-              <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
+              <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
                 <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                   <Icon name="flag" className="h-3 w-3" />
                   Posts read
                 </dt>
-                <dd className="mt-0.5 font-semibold tabular-nums">
+                <dd className="mt-1 text-lg font-semibold tabular-nums">
                   {postCount}
                   {typeof result?.posts_total === "number" && result.posts_total > postCount && (
                     <span className="font-normal text-zinc-500 dark:text-zinc-400"> of {result.posts_total}</span>
@@ -955,18 +973,18 @@ function Results({
                 </dd>
               </div>
             )}
-            <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
+            <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
               <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                 <Icon name="clock" className="h-3 w-3" />
                 Elapsed
               </dt>
-              <dd className="mt-0.5 font-semibold tabular-nums" suppressHydrationWarning>
+              <dd className="mt-1 text-lg font-semibold tabular-nums" suppressHydrationWarning>
                 {elapsed === null || (!running && lookup.ended_at === null) ? "–" : duration(elapsed)}
               </dd>
             </div>
-            <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
+            <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
               <dt className="text-zinc-500 dark:text-zinc-400">Started</dt>
-              <dd className="mt-0.5 font-semibold tabular-nums">
+              <dd className="mt-2 text-sm font-semibold tabular-nums">
                 <LocalTime epoch={lookup.started_at} />
               </dd>
             </div>
@@ -974,7 +992,7 @@ function Results({
         )}
 
         {lookup && (
-          <p className="text-sm text-zinc-700 dark:text-zinc-200">
+          <p className="rounded-lg border-l-2 border-zinc-300 bg-zinc-50/70 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-200">
             {commentsResult(withCount(lookup, result), result?.reached_end)}
           </p>
         )}
@@ -1007,7 +1025,7 @@ function Results({
       </div>
 
       {total > 0 && result && (
-        <div className="flex flex-col gap-2 border-t border-zinc-200 px-4 py-3 sm:flex-row sm:items-center sm:px-5 dark:border-zinc-800">
+        <div className="flex flex-col gap-2 border-t border-zinc-200 bg-zinc-50/60 px-4 py-3 sm:flex-row sm:items-center sm:px-5 dark:border-zinc-800 dark:bg-zinc-900/30">
           <label className="relative min-w-0 flex-1">
             <span className="sr-only">{contactsMode ? "Search these contacts" : "Search these comments"}</span>
             <Icon name="search" className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -1086,7 +1104,7 @@ function CommentCard({ comment: c }: { comment: UserComment }) {
   const postUrl = safeUrl(c.post.url);
   const authorUrl = safeUrl(c.post.author_url);
   return (
-    <li className="px-4 py-4 sm:px-5">
+    <li className="px-4 py-4 transition-colors hover:bg-zinc-50/70 sm:px-5 dark:hover:bg-zinc-900/30">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
         <span className="font-medium text-zinc-700 tabular-nums dark:text-zinc-300">{commentDate(c)}</span>
         {c.reply_to && (
@@ -1194,7 +1212,7 @@ function ContactCard({
   // the text the contact is in, when there is no comment of the account to show
   const text = c ? null : hit ? hit.text : about ? sources.about : null;
   return (
-    <li className="px-4 py-3.5 sm:px-5">
+    <li className="px-4 py-3.5 transition-colors hover:bg-zinc-50/70 sm:px-5 dark:hover:bg-zinc-900/30">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1360,12 +1378,26 @@ function OutputLog({ runId, running }: { runId: string; running: boolean }) {
 
   return (
     <details
-      className="border-t border-zinc-200 dark:border-zinc-800"
+      className="group border-t border-zinc-200 dark:border-zinc-800"
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      <summary className={`${EYEBROW} flex cursor-pointer items-center gap-1.5 px-4 py-3 select-none sm:px-5`}>
+      <summary
+        className={`${EYEBROW} flex cursor-pointer items-center gap-1.5 px-4 py-3 transition-colors select-none group-open:bg-zinc-900 group-open:text-zinc-300 hover:bg-zinc-50 sm:px-5 dark:hover:bg-zinc-900/60 dark:group-open:bg-zinc-900`}
+      >
+        {/* divs, not spans: span.rounded-full is reserved for badges/status pills (the tests rely on it) */}
+        <div className="mr-1 hidden gap-1 group-open:flex" aria-hidden="true">
+          <div className="h-2 w-2 rounded-full bg-red-400" />
+          <div className="h-2 w-2 rounded-full bg-amber-400" />
+          <div className="h-2 w-2 rounded-full bg-emerald-400" />
+        </div>
         <Icon name="terminal" className="h-3.5 w-3.5" />
         Scraper output
+        {running && (
+          <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-700 normal-case dark:bg-emerald-950 dark:text-emerald-400">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            LIVE
+          </span>
+        )}
       </summary>
       <pre
         ref={preRef}
@@ -1407,8 +1439,11 @@ function Lookups({
       <h2 id="lookups-title" className={`${EYEBROW} mb-3 flex items-center gap-1.5`}>
         <Icon name="history" className="h-3.5 w-3.5" />
         Earlier lookups
+        <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 tabular-nums dark:bg-zinc-800 dark:text-zinc-300">
+          {runs.length}
+        </span>
       </h2>
-      <div className={`${CARD} overflow-hidden`}>
+      <div className={`${CARD} overflow-hidden shadow-sm`}>
         <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {runs.slice(0, expanded ? runs.length : LOOKUP_ROWS).map((listed) => {
             // the list is only reloaded when a job starts or ends: take the running or open lookup's live copy
@@ -1425,6 +1460,12 @@ function Lookups({
                       : "hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
                   }`}
                 >
+                  <span
+                    aria-hidden="true"
+                    className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-zinc-100 text-xs font-semibold text-zinc-600 uppercase dark:bg-zinc-800 dark:text-zinc-300"
+                  >
+                    {(run.username ?? run.title ?? "?").trim().charAt(0) || "?"}
+                  </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{run.username ?? run.title}</span>
                     <span className="block text-xs tabular-nums text-zinc-500 dark:text-zinc-400">

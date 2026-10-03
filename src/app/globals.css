@@ -47,3 +47,17 @@ body {
 .animate-pop {
   animation: pop 0.25s ease-out;
 }
+
+/* thin activity bar at the top of a running lookup's card */
+@keyframes slide-x {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+
+.animate-slide-x {
+  animation: slide-x 1.3s linear infinite;
+}
