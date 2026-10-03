@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 
 import { hrefFor } from "@/lib/contact-links";
 
+import { deleteContacts } from "./actions";
 import ScraperStatus from "./scraper-status";
 
 export type ContactRow = { type: string; value: string };
@@ -60,6 +61,7 @@ const ICONS: Record<string, string> = {
   check: "M20 6 9 17l-5-5",
   external: "M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
   share: "M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v14",
+  trash: "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m5 5v6m4-6v6",
 };
 
 // row action buttons: subtle border, press-down animation, success turns green
@@ -69,6 +71,12 @@ const ACTION_IDLE =
   "border-zinc-200 text-zinc-500 hover:border-zinc-400 hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100";
 const ACTION_DONE =
   "border-emerald-300 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-400";
+// the delete button turns red on hover, so it doesn't look like the harmless buttons next to it
+const ACTION_DANGER =
+  "border-zinc-200 text-zinc-500 hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-red-900 dark:hover:bg-red-950 dark:hover:text-red-400";
+
+// contacts per delete request (deleteContacts takes up to 1000)
+const DELETE_BATCH = 500;
 
 function Icon({ name, className = "h-4 w-4" }: { name: keyof typeof ICONS; className?: string }) {
   return (
@@ -120,6 +128,98 @@ function toggleTheme() {
   }
 }
 
+// Asks before contacts are deleted. A native modal <dialog>: focus stays inside it and starts on Cancel, and
+// Escape closes it (not while the delete runs).
+function DeleteDialog({
+  rows,
+  hidden,
+  deleting,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  rows: ContactRow[];
+  hidden: number; // how many of them the current filter or search hides
+  deleting: boolean;
+  error: string;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+
+  const one = rows.length === 1 ? rows[0] : null;
+  const hiddenNote =
+    hidden === 0
+      ? ""
+      : one
+        ? "It isn't shown with the current filter or search."
+        : hidden === rows.length
+          ? "None of them are shown with the current filter or search."
+          : `${hidden} of them ${hidden === 1 ? "isn't" : "aren't"} shown with the current filter or search.`;
+
+  return (
+    <dialog
+      ref={ref}
+      onCancel={(e) => {
+        if (deleting) e.preventDefault();
+      }}
+      onClose={onClose}
+      aria-labelledby="delete-title"
+      aria-describedby="delete-about"
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-zinc-200 bg-white p-5 text-zinc-900 shadow-xl backdrop:bg-black/40 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+    >
+      <h2 id="delete-title" className="text-base font-semibold">
+        {one ? "Delete this contact?" : `Delete ${rows.length} contacts?`}
+      </h2>
+      {one && (
+        <div className="mt-3 flex items-start gap-2">
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[one.type] ?? "bg-zinc-100 dark:bg-zinc-800"}`}
+          >
+            {TYPES.find((t) => t.key === one.type)?.label ?? one.type}
+          </span>
+          <span className="min-w-0 font-mono text-sm break-all">{one.value}</span>
+        </div>
+      )}
+      <div id="delete-about" className="mt-3 space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
+        {hiddenNote && <p>{hiddenNote}</p>}
+        <p>
+          {one ? "It is" : "They are"} removed from the database, and from Filter by user. This can&apos;t be undone,
+          but a later run adds a contact again if it finds it again.
+        </p>
+      </div>
+      {error && (
+        <p role="alert" className="mt-3 text-sm text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      )}
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => ref.current?.close()}
+          disabled={deleting}
+          className="rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium transition-all hover:border-zinc-400 active:scale-95 disabled:opacity-50 dark:border-zinc-700 dark:hover:border-zinc-500"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={deleting}
+          className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-red-700 active:scale-95 disabled:opacity-60 dark:bg-red-600 dark:hover:bg-red-500"
+        >
+          <Icon name="trash" />
+          {deleting ? "Deleting..." : "Delete"}
+        </button>
+      </div>
+    </dialog>
+  );
+}
+
 export default function Dashboard({ contacts, sources }: { contacts: ContactRow[]; sources: SourceRow[] }) {
   const router = useRouter();
   const [type, setType] = useState("all");
@@ -128,11 +228,16 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
   const deferredQuery = useDeferredValue(query);
   const [feedback, setFeedback] = useState<{ key: string; kind: "copied" | "shared" } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [toDelete, setToDelete] = useState<ContactRow[] | null>(null); // waiting in the dialog for a yes
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeleting, startDelete] = useTransition();
+  const [notice, setNotice] = useState(""); // "Deleted 3 contacts." for a few seconds
   const { updatedAt } = useSyncExternalStore(subscribeFeed, getFeed, getServerFeed);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isRefreshing, startRefresh] = useTransition();
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const drawerWasOpen = useRef(false);
@@ -295,6 +400,57 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
       if (allVisibleSelected) rows.forEach((r) => next.delete(keyOf(r)));
       else rows.forEach((r) => next.add(keyOf(r)));
       return next;
+    });
+  }
+
+  // the selection can hold rows the current filter or search hides; the dialog says how many
+  const visibleKeys = useMemo(() => new Set(rows.map(keyOf)), [rows]);
+
+  function askDelete(rowsToDelete: ContactRow[]) {
+    setDeleteError("");
+    setToDelete(rowsToDelete);
+  }
+
+  function showNotice(text: string) {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice(text);
+    noticeTimer.current = setTimeout(() => {
+      noticeTimer.current = null;
+      setNotice("");
+    }, 4000);
+  }
+
+  function confirmDelete() {
+    const doomed = toDelete;
+    if (!doomed) return;
+    startDelete(async () => {
+      setDeleteError("");
+      const done = new Set<string>(); // keys sent in batches that went through
+      let deleted = 0;
+      let failure = "";
+      for (let i = 0; i < doomed.length && !failure; i += DELETE_BATCH) {
+        const batch = doomed.slice(i, i + DELETE_BATCH);
+        try {
+          const result = await deleteContacts(batch.map(({ type, value }) => ({ type, value })));
+          if ("error" in result) {
+            failure = result.error;
+          } else {
+            deleted += result.deleted;
+            batch.forEach((r) => done.add(keyOf(r)));
+          }
+        } catch {
+          failure = "The request didn't go through. Reload the page and try again.";
+        }
+      }
+      // updates after an await need a transition of their own, so they show together with the refreshed table
+      startDelete(() => {
+        if (done.size) {
+          setSelected((prev) => new Set([...prev].filter((k) => !done.has(k))));
+          showNotice(`Deleted ${deleted} contact${deleted === 1 ? "" : "s"}.`);
+        }
+        if (failure) setDeleteError(done.size ? `${deleted} deleted, the rest weren't. ${failure}` : failure);
+        else setToDelete(null);
+      });
     });
   }
 
@@ -549,8 +705,9 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
             )}
           </div>
           {selectedRows.length > 0 && (
-            <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
-              <span className="flex-1 text-xs font-medium tabular-nums">
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+              {/* on phones the count gets a line of its own, so the three buttons fit on the next one */}
+              <span className="w-full text-xs font-medium tabular-nums sm:w-auto sm:flex-1">
                 {selectedRows.length} selected
               </span>
               <button
@@ -563,6 +720,17 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
               </button>
               <button
                 type="button"
+                onClick={() => askDelete(selectedRows)}
+                className="flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-600 transition-all hover:border-red-400 hover:bg-red-50 active:scale-95 dark:border-red-900 dark:bg-zinc-950 dark:text-red-400 dark:hover:border-red-700 dark:hover:bg-red-950"
+              >
+                <Icon name="trash" className="h-3.5 w-3.5" />
+                {/* "Delete" on phones, so the three buttons fit on one line there */}
+                <span>
+                  Delete<span className="sr-only sm:not-sr-only"> selected</span>
+                </span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setSelected(new Set())}
                 className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium transition-all hover:border-zinc-400 active:scale-95 dark:border-zinc-700 dark:hover:border-zinc-500"
               >
@@ -570,6 +738,14 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
               </button>
             </div>
           )}
+          <div aria-live="polite">
+            {notice && (
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+                <Icon name="check" className="h-3.5 w-3.5" />
+                {notice}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="px-4 py-5 sm:px-6">
@@ -604,7 +780,8 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
                     </th>
                     <th className="hidden px-4 py-3 font-medium sm:table-cell">Type</th>
                     <th className="px-4 py-3 font-medium">Contact</th>
-                    <th className="px-4 py-3 text-right font-medium">Actions</th>
+                    {/* a little less padding on phones, where four buttons leave the contact column little room */}
+                    <th className="px-2 py-3 text-right font-medium sm:px-4">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
@@ -642,7 +819,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
                           {/* break-all sets word-break, which sm:wrap-break-word alone would not undo */}
                           <div className="font-mono break-all sm:break-normal sm:wrap-break-word">{row.value}</div>
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
+                        <td className="px-2 py-3 whitespace-nowrap sm:px-4">
                           <div className="flex items-center justify-end gap-1.5">
                             {href && (
                               <a
@@ -686,6 +863,15 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
                                 <Icon name="share" className="h-4 w-4" />
                               )}
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => askDelete([row])}
+                              title="Delete"
+                              aria-label={`Delete ${row.value}`}
+                              className={`${ACTION_BTN} ${ACTION_DANGER}`}
+                            >
+                              <Icon name="trash" className="h-4 w-4" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -702,6 +888,20 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
           )}
         </div>
       </main>
+
+      {toDelete && (
+        <DeleteDialog
+          rows={toDelete}
+          hidden={toDelete.filter((r) => !visibleKeys.has(keyOf(r))).length}
+          deleting={isDeleting}
+          error={deleteError}
+          onConfirm={confirmDelete}
+          onClose={() => {
+            setToDelete(null);
+            setDeleteError("");
+          }}
+        />
+      )}
     </div>
   );
 }

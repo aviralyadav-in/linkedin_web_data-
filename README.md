@@ -1,93 +1,94 @@
 # LinkedIn Contacts (frontend)
 
-`linkedin-2` wali script jo contacts PostgreSQL (`linkedin_db` → `contacts` table) mein save karti hai, unhe yeh Next.js + Prisma app browser mein dikhata hai. **Commands** page se scraper ki commands bhi yahin se chal jaati hain, terminal ke bina.
+The `linkedin-2` script saves contacts in PostgreSQL (`linkedin_db` → `contacts` table). This Next.js + Prisma app shows those contacts in the browser. From the **Commands** page you can also run the scraper's commands right here, without a terminal.
 
-Yeh app database se **sirf padhta hai**. Table `linkedin-2/linkedin_feed.py` banati hai, isliye yahan kabhi `prisma migrate` ya `prisma db push` mat chalana.
+This app reads contacts from the database, and only removes the contacts you **Delete** from the dashboard. `linkedin-2/linkedin_feed.py` creates the table, so never run `prisma migrate` or `prisma db push` here.
 
-## Chalana
+## Running
 
-Do cheezein chalni chahiye:
+Two things need to be running:
 
 ```powershell
-# 1. scraper API (linkedin-2 folder mein)
+# 1. scraper API (in the linkedin-2 folder)
 cd C:\Users\Hp\Desktop\linkedin-2
 python api.py
 
-# 2. yeh dashboard (doosre terminal mein)
+# 2. this dashboard (in a second terminal)
 cd C:\Users\Hp\Desktop\linkedin-data
 npm run dev
 ```
 
-Browser mein kholo: http://localhost:3000. API band ho to contacts phir bhi dikhenge, bas Commands page "API offline" batayega.
+Open in the browser: http://localhost:3000. If the API is off, the contacts still show; only the Commands page will say "API offline".
 
-Dashboard sirf isi computer par khulta hai (`127.0.0.1`), same Wi-Fi ke doosre device se nahi. Wajah: Commands page se koi bhi aapke LinkedIn account par scraper chala sakta hai. Phone ya doosre device se kholna ho to pehle `.env` mein `DASHBOARD_USER` / `DASHBOARD_PASSWORD` set karo, phir `npm run start -- -H 0.0.0.0` chalao.
+The dashboard opens only on this computer (`127.0.0.1`), not from another device on the same Wi-Fi. The reason: from the Commands page, anyone can run the scraper on your LinkedIn account. To open it from a phone or another device, first set `DASHBOARD_USER` / `DASHBOARD_PASSWORD` in `.env`, then run `npm run start -- -H 0.0.0.0`.
 
-### Production mode (thoda tez)
+### Production mode (a bit faster)
 
 ```powershell
 npm run build
 npm run start
 ```
 
-## Page par kya hai
+## What is on the page
 
 **Contacts (`/`)**
-- **Sidebar:** type ke filters (All, Email, Phone, WhatsApp, Telegram, LinkedIn) ginti ke saath, naye aaye contacts, Refresh aur dark/light mode. **LinkedIn** = post ya comment mein mention kiye gaye profiles / pages ke URL.
-- **Filter by user:** User comments ke **Only contacts** lookups wale accounts (username) ki list. Kisi account ko chuno to table mein sirf uske lookup (comments, About section, posts) se mile contacts dikhte hain (type filters aur unki ginti bhi usi ke andar); upar `· from <username>` ke saath `×` se filter hatao. CSV bhi wahi rows deta hai (`contacts_<username>.csv`). Yeh list database ki `comment_contacts` table se aati hai.
-- **Commands link:** sidebar mein scraper ki live haalat (Ready / Chal raha hai / API offline). Run (ya User comments ka Only contacts lookup) naye contacts save kare ya khatam ho, to table apne aap refresh hoti hai.
-- **User comments link:** sidebar mein, naye User comments tab ke liye.
-- **Search, CSV download, rows select karna**, aur har row par Open / Copy / Share.
+- **Sidebar:** filters by type (All, Email, Phone, WhatsApp, Telegram, LinkedIn) with counts, newly added contacts, Refresh, and dark/light mode. **LinkedIn** = URLs of profiles / pages mentioned in a post or comment.
+- **Filter by user:** a list of the accounts (usernames) that had **Only contacts** lookups on User comments. Pick an account and the table shows only the contacts found by its lookup (comments, About section, posts) (the type filters and their counts also work only within it); remove the filter with the `×` next to `· from <username>` at the top. The CSV gives the same rows (`contacts_<username>.csv`). This list comes from the database's `comment_contacts` table.
+- **Commands link:** in the sidebar, with the scraper's live status (Ready / Running / API offline). When a run (or a User comments Only contacts lookup) saves new contacts or finishes, the table refreshes by itself.
+- **User comments link:** in the sidebar, for the new User comments tab.
+- **Search, CSV download, selecting rows**, and Open / Copy / Share / Delete on each row.
+- **Delete:** a row's trash button removes that one contact from the database, and selecting rows and pressing **Delete selected** removes all the selected contacts. A dialog asks you to confirm first. The selected contacts include ones that a filter or search hides right now, and the dialog says how many. A contact's `comment_contacts` entries are removed with it (so it also disappears from Filter by user). A delete can't be undone, but if a later run finds the same contact again, it is saved again.
 
 **Commands (`/commands`)**
-- Page ki saari likhai English mein hai. Sirf logs mein scraper ka apna output waise hi dikhta hai.
-- Ek hi card hai, **New run**, jismein chaaron steps hain: 1 Home feed (scrolls), 2 Posts you commented on, 3 More posts by those authors, 4 Posts those authors commented on. Steps 2–4 switch se ON/OFF hote hain (step 2 band ho to 3 aur 4 bhi nahi chalte), aur har value `−` / `+` se ya type karke do (0 se 500 tak).
-- Card par dikhta hai ki feed ke baad zyada se zyada kitne posts khulenge, run lagbhag kitna lamba ho sakta hai, aur barabar ki terminal command (`$ python linkedin_feed.py ...`, copy button ke saath). **Reset to defaults** se default values wapas aa jaati hain.
-- **Start run** dabao: daayein panel mein status, samay, naye contacts, current step aur live logs. **Stop run** se command ruk jaati hai.
-- Ek waqt mein ek hi command chalti hai; tab tak Start run band rehta hai.
-- **Recent runs:** kisi par click karo to uske logs dikhenge.
-- **LinkedIn login on a server:** server ke liye session file upload aur **Check login**.
+- All the text on the page is in English. Only the logs show the scraper's own output as it is.
+- There is one card, **New run**, with all four steps: 1 Home feed (scrolls), 2 Posts you commented on, 3 More posts by those authors, 4 Posts those authors commented on. Steps 2–4 are turned ON/OFF with a switch (if step 2 is off, 3 and 4 don't run either), and you set each value with `−` / `+` or by typing it (0 to 500).
+- The card shows the most posts that will be opened after the feed, roughly how long the run can take, and the matching terminal command (`$ python linkedin_feed.py ...`, with a copy button). **Reset to defaults** brings back the default values.
+- Press **Start run**: the right panel shows the status, time, new contacts, current step and live logs. **Stop run** stops the command.
+- Only one command runs at a time; until it ends, Start run stays disabled.
+- **Recent runs:** click one to see its logs.
+- **LinkedIn login on a server:** session file upload for a server, and **Check login**.
 
 **User comments (`/comments`)**
-- Commands aur User comments page ke header mein tabs hain, ek se doosre par jaane ke liye.
-- Kisi LinkedIn account ka username (jaise `satyanadella`) ya profile URL do, aur **Find comments** dabao. `linkedin-2` ka `linkedin_comments.py` us account ke Activity → Comments page se uske saare comments laata hai. Comments database mein save nahi hote; sirf **Only contacts** ke contacts `contacts` table mein bhi jaate hain (neeche dekho).
-- **Get:** **All comments** (saare comments, post ke saath) ya **Only contacts** (email, phone number, WhatsApp, Telegram aur mention kiye gaye LinkedIn profiles, wahi rules jo scraper contacts database ke liye use karta hai; button **Find contacts** ho jaata hai). Only contacts teen jagah dhoondhta hai: account ke **comments**, uski profile ka **About section**, aur uski **saari posts** (har post ke saare comments ke saath). Max comments sirf comments ke liye hai; posts saari padhi jaati hain, lagbhag aadha minute har post.
-- **Max comments** (1 se 5000, sabse naye pehle). **Unlimited** switch on karo to box chhup jaata hai aur account ke saare comments aate hain (bade accounts mein ghante lag sakte hain); off karo to box wapas. LinkedIn yeh list har baar load karte waqt kuch comments chhod deta hai, isliye list hamesha 5 baar padhi jaati hai aur sab jod diye jaate hain.
-- Comments aate-aate dikhte hain: date, comment ka text, reply ho to kis comment ka, aur post (author, text) ke saath **Open comment** / **Open post** links. **Stop** se lookup ruk jaata hai; jitne mile, woh rehte hain.
-- **Only contacts** ke results: upar ginti (Contacts, Comments read, Posts read), phir har contact ek baar (type badge ke saath) aur kahan mila: account ke comment mein (kitne comments mein, sabse naya comment, **Open comment** link), uski post ya post ke kisi comment mein (**Open post** link), ya About section mein (**Open profile** link). Har contact ke saath **Open** (mail / call / WhatsApp / Telegram / LinkedIn profile) aur **Copy** buttons. Ye contacts database ke contacts table mein bhi save hote hain (us account ke username ke saath), isliye main page ke table mein bhi dikhte hain.
-- Results mein search, aur **CSV** download (search kiya ho to sirf wahi rows; Only contacts mein contacts ki CSV).
-- **Earlier lookups:** pichhle lookups, click karo to unke comments. Commands page ki Recent runs mein bhi dikhte hain (**Open in User comments** link ke saath).
+- The Commands and User comments pages have tabs in the header to go from one to the other.
+- Enter a LinkedIn account's username (like `satyanadella`) or profile URL, and press **Find comments**. `linkedin_comments.py` in `linkedin-2` gets all of that account's comments from its Activity → Comments page. Comments are not saved in the database; only the contacts from **Only contacts** also go into the `contacts` table (see below).
+- **Get:** **All comments** (all comments, with their post) or **Only contacts** (email, phone number, WhatsApp, Telegram and mentioned LinkedIn profiles, with the same rules the scraper uses for the contacts database; the button becomes **Find contacts**). Only contacts searches three places: the account's **comments**, the **About section** of its profile, and **all its posts** (each post with all its comments). Max comments applies only to comments; all the posts are read, about half a minute per post.
+- **Max comments** (1 to 5000, newest first). Turn the **Unlimited** switch on and the box hides and all the account's comments are fetched (big accounts can take hours); turn it off and the box comes back. Each time LinkedIn loads this list, it leaves out some comments, so the list is read up to 5 times and everything is combined; it stops at the first pass that finds no new comment.
+- Comments show up as they come in: the date, the comment text, which comment it replies to (if it is a reply), and the post (author, text), with **Open comment** / **Open post** links. **Stop** stops the lookup; the comments found so far stay.
+- **Only contacts** results: counts at the top (Contacts, Comments read, Posts read), then each contact once (with a type badge) and where it was found: in the account's comment (in how many comments, the newest comment, an **Open comment** link), in its post or in a comment on the post (**Open post** link), or in the About section (**Open profile** link). Each contact has **Open** (mail / call / WhatsApp / Telegram / LinkedIn profile) and **Copy** buttons. These contacts are also saved in the database's contacts table (with that account's username), so they also show in the main page's table.
+- Search in the results, and **CSV** download (if you searched, only those rows; in Only contacts, a CSV of the contacts).
+- **Earlier lookups:** past lookups; click one to see its comments. They also show in Recent runs on the Commands page (with an **Open in User comments** link).
 
 ## Setup
 
-`.env` mein yeh values hain (git mein nahi jaati, `.gitignore` mein `.env*` hai):
+`.env` has these values (it doesn't go into git; `.gitignore` has `.env*`):
 
-| Naam | Kya hai |
+| Name | What it is |
 |---|---|
-| `DATABASE_URL` | Wahi jo `linkedin-2/.env` mein hai. Password badlo to dono jagah badalna. |
-| `SCRAPER_API_URL` | Scraper API ka address, default `http://127.0.0.1:8000` |
-| `SCRAPER_API_TOKEN` | Wahi jo `linkedin-2/.env` mein `API_TOKEN` hai |
-| `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | Dono set hon to poora dashboard username/password maangta hai. **Server par, ya jab bhi dashboard doosre device se khul sakta ho, zaroor set karo**, warna koi bhi aapke contacts dekh sakta hai aur scraper chala sakta hai. Sirf apne PC par (default `127.0.0.1`) zaroorat nahi. |
+| `DATABASE_URL` | The same as in `linkedin-2/.env`. If you change the password, change it in both places. |
+| `SCRAPER_API_URL` | The scraper API's address, default `http://127.0.0.1:8000` |
+| `SCRAPER_API_TOKEN` | The same as `API_TOKEN` in `linkedin-2/.env` |
+| `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | If both are set, the whole dashboard asks for a username/password. **On a server, or whenever the dashboard can be opened from another device, be sure to set them**, or anyone can see your contacts and run the scraper. Not needed when it runs only on your own PC (default `127.0.0.1`). |
 
-Password ke liye letters aur numbers sabse safe hain. Next.js `.env` padhte waqt `$` ke baad wala hissa gayab kar deta hai aur `#` ke baad sab comment maan leta hai: `$` ho to `\$` likho, `#` ho to poora password `"double quotes"` mein likho. Agar password is wajah se khaali ho jaaye, to dashboard khulega hi nahi aur yahi batayega.
+Letters and numbers are the safest for a password. When Next.js reads `.env`, it drops the part after a `$` and treats everything after a `#` as a comment: if there is a `$`, write `\$`; if there is a `#`, put the whole password in `"double quotes"`. If the password ends up empty because of this, the dashboard won't open at all and will say so.
 
-Token kabhi browser tak nahi jaata: browser sirf is app ke `/api/scraper/*` routes ko call karta hai, aur yeh app server par token jodkar API ko bhejta hai.
+The token never reaches the browser: the browser only calls this app's `/api/scraper/*` routes, and this app adds the token on the server and sends the call on to the API.
 
-Prisma client `npm install` ke baad apne aap banta hai (`postinstall: prisma generate`). Haath se banana ho to: `npx prisma generate`.
+The Prisma client is generated by itself after `npm install` (`postinstall: prisma generate`). To generate it by hand: `npx prisma generate`.
 
-## Server par live karna
+## Going live on a server
 
-Pehle `linkedin-2/README.md` ke "Server par live karna" wale steps se scraper API chalao. Phir isi server par:
+First start the scraper API with the steps in "Going live on a server" in `linkedin-2/README.md`. Then, on the same server:
 
 ```bash
-# Node.js 20+ chahiye
+# Needs Node.js 20+
 cd ~/linkedin-data
 npm ci
-# .env mein DATABASE_URL, SCRAPER_API_URL, SCRAPER_API_TOKEN, DASHBOARD_USER, DASHBOARD_PASSWORD
+# in .env: DATABASE_URL, SCRAPER_API_URL, SCRAPER_API_TOKEN, DASHBOARD_USER, DASHBOARD_PASSWORD
 npm run build
 npm run start            # port 3000
 ```
 
-Isse bhi service bana do (`/etc/systemd/system/linkedin-data.service`):
+Make this a service too (`/etc/systemd/system/linkedin-data.service`):
 
 ```ini
 [Unit]
@@ -108,49 +109,51 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload && sudo systemctl enable --now linkedin-data
 ```
 
-Dashboard server par bhi sirf `127.0.0.1:3000` par sunta hai. Bahar se HTTPS ke saath kholne ke liye aage [Caddy](https://caddyserver.com) lagao, woh certificate khud le leta hai:
+On the server too, the dashboard listens only on `127.0.0.1:3000`. To open it from outside with HTTPS, put [Caddy](https://caddyserver.com) in front of it; it gets the certificate by itself:
 
-1. Domain ka A record server ke IP par point karo, aur server ke firewall mein ports 80 aur 443 kholo.
-2. `sudo apt install caddy` (Caddy ki site par diye steps se). Yeh apne aap service ki tarah chalta hai.
-3. `/etc/caddy/Caddyfile` mein sirf yeh rakho:
+1. Point the domain's A record at the server's IP, and open ports 80 and 443 in the server's firewall.
+2. `sudo apt install caddy` (using the steps on Caddy's site). It runs as a service by itself.
+3. Put only this in `/etc/caddy/Caddyfile`:
 
    ```
-   aapka-domain.com {
+   your-domain.com {
        reverse_proxy 127.0.0.1:3000
    }
    ```
 
-4. `sudo systemctl reload caddy`, phir https://aapka-domain.com kholo.
+4. `sudo systemctl reload caddy`, then open https://your-domain.com.
 
-Bina HTTPS ke dashboard ka password network par saaf padha ja sakta hai.
+Without HTTPS, the dashboard password can be read in plain text on the network.
 
 ## Files
 
-| File | Kaam |
+| File | What it does |
 |---|---|
-| `prisma/schema.prisma` | `contacts` table ka model (`type`, `value`) |
-| `prisma.config.ts` | Prisma CLI ke liye database URL (`.env` se) |
-| `src/lib/prisma.ts` | Database connection (sirf server par) |
-| `src/lib/scraper.ts` | Scraper API ko call karna, token ke saath (sirf server par) |
-| `src/lib/scraper-types.ts` | Scraper API ke data ke types |
-| `src/lib/contact-links.ts` | Contact ka link (mailto, tel, wa.me, t.me, LinkedIn profile), contacts table aur User comments dono mein |
-| `src/app/page.tsx` | Database se contacts padhta hai, aur `comment_contacts` se kaunsa contact kis account se aaya |
-| `src/app/dashboard.tsx` | Contacts ka poora UI: sidebar, search, table, CSV |
-| `src/app/scraper-status.tsx` | Sidebar ka Commands link, scraper ki live haalat ke saath |
-| `src/app/commands/page.tsx` | Commands page: API se commands, status aur history laata hai |
-| `src/app/commands/commands-panel.tsx` | Commands page ka UI: New run card, run panel, logs, history, session |
-| `src/app/comments/page.tsx` | User comments page: API se status aur pichhle lookups laata hai |
-| `src/app/comments/comments-panel.tsx` | User comments ka UI: form (All comments / Only contacts, Unlimited), results, search, CSV, pichhle lookups |
-| `src/app/comments/comments-result.ts` | Comments run ka nateeja (dono pages par) |
+| `prisma/schema.prisma` | Model of the `contacts` table (`type`, `value`) |
+| `prisma.config.ts` | Database URL for the Prisma CLI (from `.env`) |
+| `src/lib/prisma.ts` | Database connection (server only) |
+| `src/lib/scraper.ts` | Calls the scraper API, with the token (server only) |
+| `src/lib/scraper-types.ts` | Types for the scraper API's data |
+| `src/lib/contact-links.ts` | A contact's link (mailto, tel, wa.me, t.me, LinkedIn profile), in both the contacts table and User comments |
+| `src/app/page.tsx` | Reads contacts from the database, and from `comment_contacts` which contact came from which account |
+| `src/app/dashboard.tsx` | The whole contacts UI: sidebar, search, table, CSV, Delete |
+| `src/app/actions.ts` | Delete: removes the selected contacts from the database (Server Action, checks the login again first) |
+| `src/app/scraper-status.tsx` | The sidebar's Commands link, with the scraper's live status |
+| `src/app/commands/page.tsx` | Commands page: gets the commands, status and history from the API |
+| `src/app/commands/commands-panel.tsx` | Commands page UI: New run card, run panel, logs, history, session |
+| `src/app/comments/page.tsx` | User comments page: gets the status and past lookups from the API |
+| `src/app/comments/comments-panel.tsx` | User comments UI: form (All comments / Only contacts, Unlimited), results, search, CSV, past lookups |
+| `src/app/comments/comments-result.ts` | The result of a comments run (on both pages) |
 | `src/app/page-tabs.tsx` | Commands / User comments tabs |
-| `src/app/api/scraper/[...path]/route.ts` | Browser se scraper API tak ka raasta (sirf allowed calls) |
+| `src/app/api/scraper/[...path]/route.ts` | The path from the browser to the scraper API (allowed calls only) |
 | `src/proxy.ts` | Optional username/password (`DASHBOARD_USER` / `DASHBOARD_PASSWORD`) |
-| `src/app/loading.tsx`, `src/app/commands/loading.tsx`, `src/app/comments/loading.tsx` | Load hote waqt skeleton |
-| `src/app/error.tsx`, `src/app/not-found.tsx` | Database band ho to message, aur 404 page |
+| `src/lib/dashboard-auth.ts` | Checks that username/password, for both `proxy.ts` and Delete |
+| `src/app/loading.tsx`, `src/app/commands/loading.tsx`, `src/app/comments/loading.tsx` | Skeleton while loading |
+| `src/app/error.tsx`, `src/app/not-found.tsx` | Message when the database is down, and the 404 page |
 
-## Agar kuch kaam na kare
+## If something doesn't work
 
-- **"Database se connect nahi ho paya":** PostgreSQL service chal rahi hai ya nahi, aur `.env` ka `DATABASE_URL` sahi hai ya nahi, check karo.
-- **Commands page par "API offline":** `linkedin-2` folder mein `python api.py` chalao (server par `sudo systemctl status linkedin-api` / `sudo systemctl restart linkedin-api`). Page apne aap dobara try karta rehta hai.
-- **"API token match nahi karta" / "The API token doesn't match":** API chal raha hai lekin token alag hai. `SCRAPER_API_TOKEN` aur `linkedin-2/.env` ka `API_TOKEN` ek jaise hone chahiye. Badalne ke baad dono app restart karo.
-- **Run mein "LinkedIn login needed":** PC par ho to khuli Chrome window mein login karo. Server par ho to Stop karo aur Commands page se session file upload karo.
+- **"Couldn't connect to the database":** check whether the PostgreSQL service is running, and whether `DATABASE_URL` in `.env` is correct.
+- **"API offline" on the Commands page:** run `python api.py` in the `linkedin-2` folder (on a server: `sudo systemctl status linkedin-api` / `sudo systemctl restart linkedin-api`). The page keeps retrying by itself.
+- **"The API token doesn't match":** the API is running but the token is different. `SCRAPER_API_TOKEN` and `API_TOKEN` in `linkedin-2/.env` must be the same. After changing them, restart both apps.
+- **"LinkedIn login needed" in a run:** on a PC, log in in the open Chrome window. On a server, press Stop and upload a session file from the Commands page.

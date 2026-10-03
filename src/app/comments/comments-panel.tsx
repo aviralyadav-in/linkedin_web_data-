@@ -778,8 +778,8 @@ function LookupForm({
         </div>
 
         <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-400">
-          LinkedIn leaves a few comments out of this list every time it loads it, so the list is read {PASSES} times
-          and the results are combined.
+          LinkedIn leaves a few comments out of this list every time it loads it, so the list is read up to {PASSES} times
+          and the results are combined. It stops at the first time nothing new turns up.
           {unlimited
             ? " With Unlimited the whole list is read each time: about 3 minutes for every 100 comments the account has."
             : limitOk && ` ${contacts ? "The comments take" : "This lookup takes"} up to ~${roughTime(limitN, PASSES)}.`}

@@ -231,26 +231,26 @@ function phaseLabel(phase: string | null) {
 
 export const plural = (n: string, word: string) => `${n} ${word}${n === "1" ? "" : "s"}`;
 
-// linkedin_feed.py's post labels: "post 3/20", "author 2 post 1/10", "author 2 comment wala post 1/10"
+// linkedin_feed.py's post labels: "post 3/20", "author 2 post 1/10", "author 2 commented post 1/10"
 function postLabel(label: string) {
   const own = /^post (\d+)\/(\d+)$/.exec(label);
   if (own) return `Post ${own[1]} of ${own[2]}`;
-  const byAuthor = /^author (\d+) (?:comment wala )?post (\d+)\/(\d+)$/.exec(label);
+  const byAuthor = /^author (\d+) (?:commented )?post (\d+)\/(\d+)$/.exec(label);
   return byAuthor ? `Author ${byAuthor[1]} · post ${byAuthor[2]} of ${byAuthor[3]}` : null;
 }
 
-// The scraper's progress lines are Hinglish; this shows the known ones in English (the raw log stays as it is).
+// The scraper's progress lines, shown shorter and friendlier (the raw log stays as it is).
 function progressText(line: string | null) {
   const s = line?.trim() ?? "";
-  let m = /^feed scroll (\d+)\/(\d+): (\d+) posts padhe$/.exec(s);
+  let m = /^feed scroll (\d+)\/(\d+): (\d+) posts? read$/.exec(s);
   if (m) return `Scroll ${m[1]} of ${m[2]} · ${plural(m[3], "post")} read`;
-  if ((m = /^(\d+) posts mile jin par aapne comment kiya hai$/.exec(s))) {
+  if ((m = /^(\d+) posts? found that you commented on$/.exec(s))) {
     return `Found ${plural(m[1], "post")} you commented on`;
   }
-  if ((m = /^author (\d+)\/(\d+) \S+: (\d+) posts mile( jin par isne comment kiya)?$/.exec(s))) {
+  if ((m = /^author (\d+)\/(\d+) \S+: (\d+) posts? found( that they commented on)?$/.exec(s))) {
     return `Author ${m[1]} of ${m[2]} · ${plural(m[3], "post")} ${m[4] ? "they commented on" : "found"}`;
   }
-  if ((m = /^(.+?): (?:(\d+) comments padhe|(load nahi hua, skip)|yeh post pehle hi padh chuke, skip)$/.exec(s))) {
+  if ((m = /^(.+?): (?:(\d+) comments? read|(didn't load, skipped)|already read this post, skipped)$/.exec(s))) {
     const label = postLabel(m[1]);
     if (!label) return null;
     if (m[2] !== undefined) return `${label} · ${plural(m[2], "comment")} read`;

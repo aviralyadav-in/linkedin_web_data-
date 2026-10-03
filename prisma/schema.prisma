@@ -1,4 +1,5 @@
-// Read-only view of the `contacts` table that linkedin-2/linkedin_feed.py fills.
+// The `contacts` table that linkedin-2/linkedin_feed.py fills. The dashboard reads it and only deletes the rows a
+// user deletes there (src/app/actions.ts).
 // The table is owned by that script: never run `prisma migrate` or `prisma db push` here.
 
 generator client {
