@@ -155,13 +155,14 @@ type Prefs = {
   sort: Sort;
 };
 
-const PREFS_KEY = "contacts-table-v1";
+// v2: the defaults changed (every column, compact rows, no wrapping), so choices saved under v1 are left behind
+const PREFS_KEY = "contacts-table-v2";
 const PAGE_SIZES = [0, 25, 50, 100, 250];
 const DEFAULT_SORT: Sort = { key: "type", dir: "asc" };
 const DEFAULT_PREFS: Prefs = {
-  cols: { type: true, source: false, details: false, actions: true },
-  density: "comfortable",
-  wrap: true,
+  cols: { type: true, source: true, details: true, actions: true },
+  density: "compact",
+  wrap: false,
   pageSize: 0,
   sort: DEFAULT_SORT,
 };
@@ -200,7 +201,7 @@ function readPrefs(): Prefs {
       details: bool(cols.details, DEFAULT_PREFS.cols.details),
       actions: bool(cols.actions, DEFAULT_PREFS.cols.actions),
     },
-    density: r.density === "compact" ? "compact" : "comfortable",
+    density: r.density === "compact" || r.density === "comfortable" ? r.density : DEFAULT_PREFS.density,
     wrap: bool(r.wrap, DEFAULT_PREFS.wrap),
     pageSize: typeof r.pageSize === "number" && PAGE_SIZES.includes(r.pageSize) ? r.pageSize : 0,
     sort: { key: sort.key === "value" ? "value" : "type", dir: sort.dir === "desc" ? "desc" : "asc" },

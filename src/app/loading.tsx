@@ -39,17 +39,21 @@ export default function Loading() {
             <div className="h-8 w-28 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
           </div>
           <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
-            <div className="h-10 animate-pulse bg-zinc-50 dark:bg-zinc-900" />
+            {/* compact rows with every column, the table's default look */}
+            <div className="h-8 animate-pulse bg-zinc-50 dark:bg-zinc-900" />
             <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {Array.from({ length: 8 }, (_, i) => (
-                <div key={i} className="flex animate-pulse items-center gap-4 bg-white px-4 py-3.5 dark:bg-zinc-950">
-                  <div className="h-4 w-4 rounded bg-zinc-200 dark:bg-zinc-800" />
-                  <div className="hidden h-5 w-20 rounded-full bg-zinc-100 sm:block dark:bg-zinc-900" />
+                <div key={i} className="flex animate-pulse items-center gap-4 bg-white px-4 py-1.5 dark:bg-zinc-950">
+                  <div className="h-4 w-4 shrink-0 rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="hidden h-5 w-20 shrink-0 rounded-full bg-zinc-100 sm:block dark:bg-zinc-900" />
                   <div
                     className="h-4 flex-1 rounded bg-zinc-100 dark:bg-zinc-900"
                     style={{ maxWidth: `${45 + ((i * 13) % 40)}%` }}
                   />
-                  <div className="ml-auto flex gap-1.5">
+                  {/* Source and Details */}
+                  <div className="hidden h-5 w-28 shrink-0 rounded-full bg-zinc-100 sm:block dark:bg-zinc-900" />
+                  <div className="hidden h-3 w-32 shrink-0 rounded bg-zinc-100 sm:block dark:bg-zinc-900" />
+                  <div className="ml-auto flex shrink-0 gap-1.5">
                     <div className="h-8 w-8 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
                     <div className="h-8 w-8 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
                     <div className="h-8 w-8 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
