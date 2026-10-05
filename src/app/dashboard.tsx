@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type ReactNode,
   useDeferredValue,
   useEffect,
   useLayoutEffect,
@@ -13,11 +14,12 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { codeLabel, detailsFor, facetsOf, type Facets } from "@/lib/contact-facets";
 import { hrefFor } from "@/lib/contact-links";
 
 import { deleteContacts } from "./actions";
-import ScraperStatus from "./scraper-status";
+import { useScraperWatch } from "./scraper-status";
 
 export type ContactRow = { type: string; value: string };
 // a contact found in this LinkedIn account's comments (User comments, Only contacts)
@@ -66,6 +68,14 @@ const ICONS: Record<string, string> = {
   external: "M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
   share: "M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v14",
   trash: "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m5 5v6m4-6v6",
+  filter: "M22 3H2l8 9.46V19l4 2v-8.54L22 3Z",
+  sliders: "M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4",
+  chevronUp: "m18 15-6-6-6 6",
+  chevronDown: "m6 9 6 6 6-6",
+  chevronsUpDown: "m7 15 5 5 5-5M7 9l5-5 5 5",
+  chevronLeft: "m15 18-6-6 6-6",
+  chevronRight: "m9 18 6-6-6-6",
+  reset: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5",
 };
 
 // row action buttons: subtle border, press-down animation, success turns green
@@ -130,6 +140,178 @@ function toggleTheme() {
   } catch {
     // theme still switches for this page view even if it can't be persisted
   }
+}
+
+// How the table looks, chosen under Customize and kept in this browser's localStorage. Like the "Updated" stamp
+// it's an external store: the server (which can't read localStorage) renders the defaults, and the browser
+// switches to the saved choice right after hydration, so the two never mismatch.
+type Sort = { key: "type" | "value"; dir: "asc" | "desc" };
+type Columns = { type: boolean; source: boolean; details: boolean; actions: boolean };
+type Prefs = {
+  cols: Columns;
+  density: "comfortable" | "compact";
+  wrap: boolean; // long values wrap onto more lines, or are cut to one line
+  pageSize: number; // rows per page, 0 = every row on one page
+  sort: Sort;
+};
+
+const PREFS_KEY = "contacts-table-v1";
+const PAGE_SIZES = [0, 25, 50, 100, 250];
+const DEFAULT_SORT: Sort = { key: "type", dir: "asc" };
+const DEFAULT_PREFS: Prefs = {
+  cols: { type: true, source: false, details: false, actions: true },
+  density: "comfortable",
+  wrap: true,
+  pageSize: 0,
+  sort: DEFAULT_SORT,
+};
+
+const COLUMN_OPTIONS: { key: keyof Columns; label: string }[] = [
+  { key: "type", label: "Type" },
+  { key: "source", label: "Source" },
+  { key: "details", label: "Details" },
+  { key: "actions", label: "Actions" },
+];
+
+const SORT_OPTIONS = [
+  { value: "type:asc", label: "Type (default order)" },
+  { value: "type:desc", label: "Type (reversed)" },
+  { value: "value:asc", label: "Contact A → Z" },
+  { value: "value:desc", label: "Contact Z → A" },
+];
+
+// whatever is stored is checked field by field; anything unexpected falls back to its default
+function readPrefs(): Prefs {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null");
+  } catch {
+    return DEFAULT_PREFS;
+  }
+  if (!raw || typeof raw !== "object") return DEFAULT_PREFS;
+  const r = raw as Record<string, unknown>;
+  const cols = (r.cols && typeof r.cols === "object" ? r.cols : {}) as Record<string, unknown>;
+  const sort = (r.sort && typeof r.sort === "object" ? r.sort : {}) as Record<string, unknown>;
+  const bool = (v: unknown, fallback: boolean) => (typeof v === "boolean" ? v : fallback);
+  return {
+    cols: {
+      type: bool(cols.type, DEFAULT_PREFS.cols.type),
+      source: bool(cols.source, DEFAULT_PREFS.cols.source),
+      details: bool(cols.details, DEFAULT_PREFS.cols.details),
+      actions: bool(cols.actions, DEFAULT_PREFS.cols.actions),
+    },
+    density: r.density === "compact" ? "compact" : "comfortable",
+    wrap: bool(r.wrap, DEFAULT_PREFS.wrap),
+    pageSize: typeof r.pageSize === "number" && PAGE_SIZES.includes(r.pageSize) ? r.pageSize : 0,
+    sort: { key: sort.key === "value" ? "value" : "type", dir: sort.dir === "desc" ? "desc" : "asc" },
+  };
+}
+
+let prefsCache: Prefs | null = null;
+const prefsListeners = new Set<() => void>();
+
+const getPrefs = () => (prefsCache ??= readPrefs());
+const getServerPrefs = () => DEFAULT_PREFS;
+
+function subscribePrefs(cb: () => void) {
+  prefsListeners.add(cb);
+  // changed in another tab (null: that tab cleared the storage)
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === PREFS_KEY || e.key === null) {
+      prefsCache = readPrefs();
+      cb();
+    }
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    prefsListeners.delete(cb);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+function savePrefs(next: Prefs) {
+  prefsCache = next;
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(next));
+  } catch {
+    // still applies to this page view, it just isn't remembered
+  }
+  prefsListeners.forEach((l) => l());
+}
+
+const updatePrefs = (patch: Partial<Prefs>) => savePrefs({ ...getPrefs(), ...patch });
+
+// The filters under the Filters button. They narrow the rows before the sidebar's type filter, so the sidebar
+// counts follow them (like Filter by user). "all" = that filter is off.
+type Filters = { source: string; link: string; domain: string; country: string; selection: string };
+const NO_FILTERS: Filters = { source: "all", link: "all", domain: "all", country: "all", selection: "all" };
+
+const SOURCE_LABEL: Record<string, string> = { comments: "From User comments", scraper: "Scraper runs only" };
+const LINK_LABEL: Record<string, string> = { yes: "Has a link", no: "No link" };
+const SELECTION_LABEL: Record<string, string> = { selected: "Selected only", unselected: "Not selected" };
+
+type FacetRow = Facets & { link: boolean };
+
+// the toolbar buttons above the table
+const TOOL_BTN =
+  "flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition-all active:scale-95";
+const TOOL_IDLE =
+  "border-zinc-200 bg-white hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:hover:border-zinc-500";
+const TOOL_OPEN = "border-zinc-900 bg-zinc-50 dark:border-zinc-100 dark:bg-zinc-900";
+const FIELD_LABEL = "mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-300";
+
+// a Select with its label above it, for the Filters and Customize panels
+function LabeledSelect({
+  id,
+  label,
+  value,
+  onChange,
+  disabled,
+  children,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <label htmlFor={id} className={FIELD_LABEL}>
+        {label}
+      </label>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>{children}</SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+// The accounts whose comments a contact was found in; clicking one filters the table by that user.
+function SourceCell({ names, onPick }: { names: string[] | undefined; onPick: (name: string) => void }) {
+  if (!names?.length) return <span className="text-xs text-zinc-500 dark:text-zinc-400">Scraper run</span>;
+  return (
+    <div className="flex flex-wrap gap-1" title={names.length > 2 ? names.join(", ") : undefined}>
+      {names.slice(0, 2).map((name) => (
+        <button
+          key={name}
+          type="button"
+          onClick={() => onPick(name)}
+          title={`Show only contacts from ${name}`}
+          className="max-w-40 truncate rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+        >
+          {name}
+        </button>
+      ))}
+      {names.length > 2 && (
+        <span className="rounded-full px-1.5 py-0.5 text-xs text-zinc-500 dark:text-zinc-400">+{names.length - 2}</span>
+      )}
+    </div>
+  );
 }
 
 // Asks before contacts are deleted. A native modal <dialog>: focus stays inside it and starts on Cancel, and
@@ -245,6 +427,10 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
   const drawerRef = useRef<HTMLElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const drawerWasOpen = useRef(false);
+  const [tableFilters, setTableFilters] = useState<Filters>(NO_FILTERS);
+  const [panel, setPanel] = useState<"filters" | "customize" | null>(null); // the panel open above the table
+  const prefs = useSyncExternalStore(subscribePrefs, getPrefs, getServerPrefs);
+  const [paging, setPaging] = useState({ key: "", page: 1 }); // the page, for the view `key` describes
 
   // In dev, React Strict Mode's remount resets <html> attributes; re-apply the stored
   // theme before paint (no-op in production). See the Next.js "Preventing Flash" guide.
@@ -284,6 +470,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
   }, [sidebarOpen]);
 
   const refresh = () => startRefresh(() => router.refresh());
+  useScraperWatch(refresh);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -304,26 +491,151 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
   // a user that no longer has contacts (e.g. after a refresh) means no user filter
   const activeUser = users.has(user) ? user : "";
 
-  // the contacts the user filter leaves; the type filter and its counts work within them
+  // the contacts the user filter leaves; the other filters, the type filter and its counts work within them
   const scoped = useMemo(() => {
     const keys = users.get(activeUser);
     return keys ? contacts.filter((c) => keys.has(keyOf(c))) : contacts;
   }, [contacts, users, activeUser]);
 
+  // what each contact's value says about it, for the filters and the Details column
+  const facets = useMemo(
+    () => new Map<string, FacetRow>(contacts.map((c) => [keyOf(c), { ...facetsOf(c), link: hrefFor(c) !== null }])),
+    [contacts],
+  );
+
+  // the accounts whose comments each contact was found in (Source column and filter)
+  const sourceOf = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const s of sources) {
+      const k = keyOf(s);
+      const names = m.get(k);
+      if (names) names.push(s.username);
+      else m.set(k, [s.username]);
+    }
+    return m;
+  }, [sources]);
+
+  // the choices the Email domain and Country code filters offer, each with how many contacts it has
+  const options = useMemo(() => {
+    const domains = new Map<string, number>();
+    const codes = new Map<string, number>();
+    let personal = 0;
+    for (const c of scoped) {
+      const f = facets.get(keyOf(c));
+      if (f?.domain) {
+        domains.set(f.domain, (domains.get(f.domain) ?? 0) + 1);
+        if (f.personal) personal++;
+      }
+      if (f?.code) codes.set(f.code, (codes.get(f.code) ?? 0) + 1);
+    }
+    const emails = [...domains.values()].reduce((a, b) => a + b, 0);
+    // most contacts first, then A to Z; unrecognized numbers last
+    const byCount = ([a, x]: [string, number], [b, y]: [string, number]) =>
+      Number(a === "?") - Number(b === "?") || y - x || (a < b ? -1 : a > b ? 1 : 0);
+    return { domains: [...domains].sort(byCount), codes: [...codes].sort(byCount), personal, business: emails - personal };
+  }, [scoped, facets]);
+
+  // a domain or code that no longer has contacts (after a delete, or with another user) means that filter is off
+  const domainFilter =
+    tableFilters.domain.startsWith("d:") && !options.domains.some(([d]) => d === tableFilters.domain.slice(2))
+      ? "all"
+      : tableFilters.domain;
+  const countryFilter =
+    tableFilters.country.startsWith("c:") && !options.codes.some(([c]) => c === tableFilters.country.slice(2))
+      ? "all"
+      : tableFilters.country;
+
+  const filtered = useMemo(
+    () =>
+      scoped.filter((c) => {
+        const k = keyOf(c);
+        const f = facets.get(k);
+        if (!f) return false;
+        if (tableFilters.source !== "all" && (tableFilters.source === "comments") !== sourceOf.has(k)) return false;
+        if (tableFilters.link !== "all" && (tableFilters.link === "yes") !== f.link) return false;
+        // Email domain keeps only emails, Country code only numbers
+        if (domainFilter !== "all") {
+          if (!f.domain) return false;
+          if (domainFilter === "personal" ? !f.personal : domainFilter === "business" ? f.personal : f.domain !== domainFilter.slice(2)) {
+            return false;
+          }
+        }
+        if (countryFilter !== "all" && f.code !== countryFilter.slice(2)) return false;
+        if (tableFilters.selection !== "all" && (tableFilters.selection === "selected") !== selected.has(k)) return false;
+        return true;
+      }),
+    [scoped, facets, sourceOf, selected, tableFilters.source, tableFilters.link, tableFilters.selection, domainFilter, countryFilter],
+  );
+
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const row of scoped) c[row.type] = (c[row.type] ?? 0) + 1;
+    for (const row of filtered) c[row.type] = (c[row.type] ?? 0) + 1;
     return c;
-  }, [scoped]);
+  }, [filtered]);
 
+  const { sort, pageSize } = prefs;
   const rows = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
-    return scoped
-      .filter((row) => (type === "all" || row.type === type) && (!q || row.value.toLowerCase().includes(q)))
-      // the sidebar's type order (email first, LinkedIn last); the sort is stable, so within a
-      // type the rows keep their order
-      .sort((a, b) => (TYPE_RANK.get(a.type) ?? TYPES.length) - (TYPE_RANK.get(b.type) ?? TYPES.length));
-  }, [scoped, type, deferredQuery]);
+    const list = filtered.filter(
+      (row) => (type === "all" || row.type === type) && (!q || row.value.toLowerCase().includes(q)),
+    );
+    const sign = sort.dir === "asc" ? 1 : -1;
+    const rank = (t: string) => TYPE_RANK.get(t) ?? TYPES.length;
+    // The sort is stable, so rows that compare equal keep the database's order (value A to Z). By type, the
+    // default, that is the sidebar's order: email first, LinkedIn last.
+    return sort.key === "type"
+      ? list.sort((a, b) => sign * (rank(a.type) - rank(b.type)))
+      : list.sort((a, b) => {
+          const x = a.value.toLowerCase();
+          const y = b.value.toLowerCase();
+          return sign * (x < y ? -1 : x > y ? 1 : 0);
+        });
+  }, [filtered, type, deferredQuery, sort.key, sort.dir]);
+
+  // Rows per page (Customize; 0 = all). A change to what the table shows (a filter, the search, the sort, the
+  // page size) starts again at page 1; a refresh or a delete keeps the page, or the last one if it's gone.
+  const pageCount = pageSize ? Math.max(1, Math.ceil(rows.length / pageSize)) : 1;
+  const pagingKey = [type, deferredQuery, activeUser, JSON.stringify(tableFilters), sort.key, sort.dir, pageSize].join("\n");
+  const page = paging.key === pagingKey ? Math.min(paging.page, pageCount) : 1;
+  const pageRows = pageSize ? rows.slice((page - 1) * pageSize, page * pageSize) : rows;
+
+  function goToPage(n: number) {
+    setPaging({ key: pagingKey, page: n });
+    window.scrollTo({ top: 0 });
+  }
+
+  function setFilter(key: keyof Filters, value: string) {
+    setTableFilters((prev) => ({ ...prev, [key]: value }));
+  }
+
+  // the active filters, shown as removable chips next to the Filters button
+  const chips: { key: keyof Filters; label: string }[] = [];
+  if (tableFilters.source !== "all") chips.push({ key: "source", label: SOURCE_LABEL[tableFilters.source] });
+  if (tableFilters.link !== "all") chips.push({ key: "link", label: LINK_LABEL[tableFilters.link] });
+  if (domainFilter !== "all") {
+    const label =
+      domainFilter === "personal"
+        ? "Personal emails"
+        : domainFilter === "business"
+          ? "Business emails"
+          : `@${domainFilter.slice(2)}`;
+    chips.push({ key: "domain", label });
+  }
+  if (countryFilter !== "all") {
+    chips.push({ key: "country", label: codeLabel(countryFilter.slice(2), "Unrecognized numbers") });
+  }
+  if (tableFilters.selection !== "all") chips.push({ key: "selection", label: SELECTION_LABEL[tableFilters.selection] });
+
+  const customized = JSON.stringify(prefs) !== JSON.stringify(DEFAULT_PREFS);
+
+  // a column header click sorts by it, a second reverses, a third goes back to the default order
+  function toggleSort(key: Sort["key"]) {
+    const s = getPrefs().sort;
+    updatePrefs({ sort: s.key !== key ? { key, dir: "asc" } : s.dir === "asc" ? { key, dir: "desc" } : DEFAULT_SORT });
+  }
+
+  const ariaSort = (key: Sort["key"]): "ascending" | "descending" | "none" =>
+    sort.key !== key ? "none" : sort.dir === "asc" ? "ascending" : "descending";
 
   function flash(key: string, kind: "copied" | "shared") {
     // one indicator shows at a time, so cancelling the previous timer means a quick
@@ -387,8 +699,9 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
   // Selection is a set of type:value keys; intersecting with the live data means rows
   // that disappear from the DB drop out of the selection automatically.
   const selectedRows = useMemo(() => contacts.filter((c) => selected.has(keyOf(c))), [contacts, selected]);
-  const allVisibleSelected = rows.length > 0 && rows.every((r) => selected.has(keyOf(r)));
-  const someVisibleSelected = rows.some((r) => selected.has(keyOf(r)));
+  // the header checkbox works on the rows on screen: all of them, or this page's
+  const allVisibleSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(keyOf(r)));
+  const someVisibleSelected = pageRows.some((r) => selected.has(keyOf(r)));
 
   function toggleRow(row: ContactRow) {
     setSelected((prev) => {
@@ -403,8 +716,8 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
   function toggleAllVisible() {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (allVisibleSelected) rows.forEach((r) => next.delete(keyOf(r)));
-      else rows.forEach((r) => next.add(keyOf(r)));
+      if (allVisibleSelected) pageRows.forEach((r) => next.delete(keyOf(r)));
+      else pageRows.forEach((r) => next.add(keyOf(r)));
       return next;
     });
   }
@@ -461,7 +774,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
   }
 
   const filters = [
-    { key: "all", label: "All", icon: "all" as const, count: scoped.length },
+    { key: "all", label: "All", icon: "all" as const, count: filtered.length },
     ...TYPES.map((t) => ({ ...t, count: counts[t.key] ?? 0 })),
   ];
 
@@ -483,8 +796,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
         </button>
       </div>
 
-      <div className="space-y-2 px-3 pb-4">
-        <ScraperStatus onNewData={refresh} />
+      <div className="px-3 pb-4">
         <Link
           href="/comments"
           className="flex items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2 text-sm transition-colors hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
@@ -585,6 +897,299 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
       </div>
     </div>
   );
+
+  // above the table: the Filters and Customize buttons, the active filters, and the open panel
+  const tableControls = (
+    <>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setPanel((p) => (p === "filters" ? null : "filters"))}
+          aria-expanded={panel === "filters"}
+          aria-controls="filters-panel"
+          className={`${TOOL_BTN} ${panel === "filters" ? TOOL_OPEN : TOOL_IDLE}`}
+        >
+          <Icon name="filter" />
+          Filters
+          {chips.length > 0 && (
+            <span className="rounded-full bg-zinc-900 px-1.5 text-[11px] leading-5 text-white tabular-nums dark:bg-zinc-100 dark:text-zinc-900">
+              {chips.length}
+            </span>
+          )}
+        </button>
+        {chips.map((chip) => (
+          <span
+            key={chip.key}
+            className="inline-flex max-w-full items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 py-0.5 pr-1 pl-2.5 text-xs font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+          >
+            <span className="truncate">{chip.label}</span>
+            <button
+              type="button"
+              onClick={() => setFilter(chip.key, "all")}
+              aria-label={`Remove filter: ${chip.label}`}
+              title="Remove filter"
+              className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-100"
+            >
+              <Icon name="x" className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        {chips.length > 1 && (
+          <button
+            type="button"
+            onClick={() => setTableFilters(NO_FILTERS)}
+            className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
+          >
+            Clear all
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setPanel((p) => (p === "customize" ? null : "customize"))}
+          aria-expanded={panel === "customize"}
+          aria-controls="customize-panel"
+          className={`ml-auto ${TOOL_BTN} ${panel === "customize" ? TOOL_OPEN : TOOL_IDLE}`}
+        >
+          <Icon name="sliders" />
+          Customize
+          {customized && (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-500" aria-hidden="true" />
+              <span className="sr-only">(changed from the default)</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {panel === "filters" && (
+        <div
+          id="filters-panel"
+          className="mb-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+            <LabeledSelect
+              id="filter-source"
+              label="Source"
+              value={tableFilters.source}
+              onChange={(v) => setFilter("source", v)}
+            >
+              <SelectItem value="all">Any source</SelectItem>
+              <SelectItem value="comments">User comments lookups</SelectItem>
+              <SelectItem value="scraper">Scraper runs only</SelectItem>
+            </LabeledSelect>
+            <LabeledSelect id="filter-link" label="Link" value={tableFilters.link} onChange={(v) => setFilter("link", v)}>
+              <SelectItem value="all">Any</SelectItem>
+              <SelectItem value="yes">Has a link (Open works)</SelectItem>
+              <SelectItem value="no">No link</SelectItem>
+            </LabeledSelect>
+            <LabeledSelect
+              id="filter-domain"
+              label="Email domain"
+              value={domainFilter}
+              onChange={(v) => setFilter("domain", v)}
+              disabled={options.domains.length === 0}
+            >
+              <SelectItem value="all">Any</SelectItem>
+              <SelectItem value="personal">Personal providers ({options.personal})</SelectItem>
+              <SelectItem value="business">Business domains ({options.business})</SelectItem>
+              <SelectSeparator />
+              {options.domains.map(([domain, n]) => (
+                <SelectItem key={domain} value={`d:${domain}`}>
+                  {domain} ({n})
+                </SelectItem>
+              ))}
+            </LabeledSelect>
+            <LabeledSelect
+              id="filter-country"
+              label="Country code"
+              value={countryFilter}
+              onChange={(v) => setFilter("country", v)}
+              disabled={options.codes.length === 0}
+            >
+              <SelectItem value="all">Any</SelectItem>
+              {options.codes.map(([code, n]) => (
+                <SelectItem key={code} value={`c:${code}`}>
+                  {codeLabel(code, "Unrecognized")} ({n})
+                </SelectItem>
+              ))}
+            </LabeledSelect>
+            <LabeledSelect
+              id="filter-selection"
+              label="Selection"
+              value={tableFilters.selection}
+              onChange={(v) => setFilter("selection", v)}
+            >
+              <SelectItem value="all">All rows</SelectItem>
+              <SelectItem value="selected">Selected only ({selectedRows.length})</SelectItem>
+              <SelectItem value="unselected">Not selected</SelectItem>
+            </LabeledSelect>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              Email domain keeps only emails, Country code only phone and WhatsApp numbers.
+            </p>
+            <button
+              type="button"
+              onClick={() => setTableFilters(NO_FILTERS)}
+              disabled={chips.length === 0}
+              className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium transition-all hover:border-zinc-400 active:scale-95 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-700 dark:hover:border-zinc-500"
+            >
+              Clear filters
+            </button>
+          </div>
+        </div>
+      )}
+
+      {panel === "customize" && (
+        <div
+          id="customize-panel"
+          className="mb-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
+        >
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <fieldset className="min-w-0">
+              <legend className={FIELD_LABEL}>Columns</legend>
+              <div className="flex flex-wrap gap-1.5">
+                {COLUMN_OPTIONS.map((col) => (
+                  <label
+                    key={col.key}
+                    className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium transition-colors hover:border-zinc-400 has-checked:border-zinc-900 has-checked:bg-zinc-50 has-focus-visible:ring-2 has-focus-visible:ring-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500 dark:has-checked:border-zinc-100 dark:has-checked:bg-zinc-900"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={prefs.cols[col.key]}
+                      onChange={(e) => updatePrefs({ cols: { ...getPrefs().cols, [col.key]: e.target.checked } })}
+                      className="h-3.5 w-3.5 accent-zinc-900 outline-none dark:accent-zinc-100"
+                    />
+                    {col.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset className="min-w-0">
+              <legend className={FIELD_LABEL}>Row density</legend>
+              <div className="inline-flex rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-700">
+                {(["comfortable", "compact"] as const).map((density) => (
+                  <label key={density} className="cursor-pointer">
+                    <input
+                      type="radio"
+                      name="density"
+                      value={density}
+                      checked={prefs.density === density}
+                      onChange={() => updatePrefs({ density })}
+                      className="peer sr-only"
+                    />
+                    <span className="block rounded-md px-3 py-1 text-xs font-medium text-zinc-600 transition-colors peer-checked:bg-zinc-900 peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-zinc-400 dark:text-zinc-300 dark:peer-checked:bg-zinc-100 dark:peer-checked:text-zinc-900">
+                      {density === "comfortable" ? "Comfortable" : "Compact"}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <LabeledSelect
+              id="page-size"
+              label="Rows per page"
+              value={String(pageSize)}
+              onChange={(v) => updatePrefs({ pageSize: Number(v) })}
+            >
+              {PAGE_SIZES.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {n ? `${n} rows` : "All rows"}
+                </SelectItem>
+              ))}
+            </LabeledSelect>
+            <LabeledSelect
+              id="sort-by"
+              label="Sort by"
+              value={`${sort.key}:${sort.dir}`}
+              onChange={(v) => {
+                const [key, dir] = v.split(":");
+                updatePrefs({ sort: { key: key === "value" ? "value" : "type", dir: dir === "desc" ? "desc" : "asc" } });
+              }}
+            >
+              {SORT_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </LabeledSelect>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                checked={prefs.wrap}
+                onChange={(e) => updatePrefs({ wrap: e.target.checked })}
+                className="h-3.5 w-3.5 accent-zinc-900 dark:accent-zinc-100"
+              />
+              Wrap long values (off: one line each)
+            </label>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">Saved in this browser</span>
+              <button
+                type="button"
+                onClick={() => savePrefs(DEFAULT_PREFS)}
+                disabled={!customized}
+                className="flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium transition-all hover:border-zinc-400 active:scale-95 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-700 dark:hover:border-zinc-500"
+              >
+                <Icon name="reset" className="h-3.5 w-3.5" />
+                Reset to default
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  const pager = pageSize > 0 && rows.length > 0 && (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+      <span className="tabular-nums">
+        Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)} of {rows.length}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => goToPage(page - 1)}
+          disabled={page <= 1}
+          aria-label="Previous page"
+          className={`${ACTION_BTN} ${ACTION_IDLE} disabled:pointer-events-none disabled:opacity-40`}
+        >
+          <Icon name="chevronLeft" />
+        </button>
+        <span className="tabular-nums">
+          Page {page} of {pageCount}
+        </span>
+        <button
+          type="button"
+          onClick={() => goToPage(page + 1)}
+          disabled={page >= pageCount}
+          aria-label="Next page"
+          className={`${ACTION_BTN} ${ACTION_IDLE} disabled:pointer-events-none disabled:opacity-40`}
+        >
+          <Icon name="chevronRight" />
+        </button>
+      </div>
+    </div>
+  );
+
+  // a sortable column header: the arrow shows the current order
+  const sortButton = (key: Sort["key"], label: string) => (
+    <button
+      type="button"
+      onClick={() => toggleSort(key)}
+      title={`Sort by ${label.toLowerCase()}`}
+      className="inline-flex items-center gap-1 font-medium tracking-wide uppercase transition-colors hover:text-zinc-900 dark:hover:text-zinc-100"
+    >
+      {label}
+      <Icon
+        name={sort.key !== key ? "chevronsUpDown" : sort.dir === "asc" ? "chevronUp" : "chevronDown"}
+        className={`h-3.5 w-3.5 ${sort.key === key ? "" : "opacity-40"}`}
+      />
+    </button>
+  );
+
+  const cellY = prefs.density === "compact" ? "py-1.5" : "py-3";
+  const headY = prefs.density === "compact" ? "py-2" : "py-3";
 
   return (
     <div className="flex min-h-dvh w-full">
@@ -754,6 +1359,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
         </div>
 
         <div className="px-4 py-5 sm:px-6">
+          {contacts.length > 0 && tableControls}
           {contacts.length === 0 ? (
             <div className="rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
               No contacts in the database yet. Start a run from the{" "}
@@ -771,7 +1377,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
               <table className="w-full text-sm">
                 <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                   <tr>
-                    <th className="w-10 px-3 py-3">
+                    <th className={`w-10 px-3 ${headY}`}>
                       <input
                         type="checkbox"
                         checked={allVisibleSelected}
@@ -783,15 +1389,32 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
                         className="h-4 w-4 cursor-pointer accent-zinc-900 dark:accent-zinc-100"
                       />
                     </th>
-                    <th className="hidden px-4 py-3 font-medium sm:table-cell">Type</th>
-                    <th className="px-4 py-3 font-medium">Contact</th>
+                    {prefs.cols.type && (
+                      <th aria-sort={ariaSort("type")} className={`hidden px-4 font-medium sm:table-cell ${headY}`}>
+                        {sortButton("type", "Type")}
+                      </th>
+                    )}
+                    <th aria-sort={ariaSort("value")} className={`px-4 font-medium ${headY}`}>
+                      {sortButton("value", "Contact")}
+                    </th>
+                    {prefs.cols.source && (
+                      <th className={`hidden px-4 font-medium sm:table-cell ${headY}`}>Source</th>
+                    )}
+                    {prefs.cols.details && (
+                      <th className={`hidden px-4 font-medium sm:table-cell ${headY}`}>Details</th>
+                    )}
                     {/* a little less padding on phones, where four buttons leave the contact column little room */}
-                    <th className="px-2 py-3 text-right font-medium sm:px-4">Actions</th>
+                    {prefs.cols.actions && (
+                      <th className={`px-2 text-right font-medium sm:px-4 ${headY}`}>Actions</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {rows.map((row) => {
+                  {pageRows.map((row) => {
+                    const key = keyOf(row);
                     const href = hrefFor(row);
+                    const facet = facets.get(key);
+                    const details = prefs.cols.details && facet ? detailsFor(row, facet) : "";
                     const badge = (
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[row.type] ?? "bg-zinc-100 dark:bg-zinc-800"}`}
@@ -801,84 +1424,117 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
                     );
                     return (
                       <tr
-                        key={keyOf(row)}
+                        key={key}
                         className={`transition-colors ${
-                          selected.has(keyOf(row))
+                          selected.has(key)
                             ? "bg-zinc-100/80 dark:bg-zinc-800/40"
                             : "bg-white hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900/60"
                         }`}
                       >
-                        <td className="w-10 px-3 py-3">
+                        <td className={`w-10 px-3 ${cellY}`}>
                           <input
                             type="checkbox"
-                            checked={selected.has(keyOf(row))}
+                            checked={selected.has(key)}
                             onChange={() => toggleRow(row)}
                             aria-label={`Select ${row.value}`}
                             className="h-4 w-4 cursor-pointer accent-zinc-900 dark:accent-zinc-100"
                           />
                         </td>
-                        <td className="hidden px-4 py-3 whitespace-nowrap sm:table-cell">{badge}</td>
-                        <td className="px-4 py-3">
+                        {prefs.cols.type && (
+                          <td className={`hidden px-4 whitespace-nowrap sm:table-cell ${cellY}`}>{badge}</td>
+                        )}
+                        {/* with wrapping off, w-full + max-w-0 give this column the room the others leave, and the
+                            value is cut to fit it */}
+                        <td className={`px-4 ${cellY} ${prefs.wrap ? "" : "w-full max-w-0"}`}>
                           {/* on phones the Type column is hidden, so the badge sits above the value */}
-                          <div className="mb-1 sm:hidden">{badge}</div>
+                          {prefs.cols.type && <div className="mb-1 sm:hidden">{badge}</div>}
                           {/* break-all sets word-break, which sm:wrap-break-word alone would not undo */}
-                          <div className="font-mono break-all sm:break-normal sm:wrap-break-word">{row.value}</div>
+                          {prefs.wrap ? (
+                            <div className="font-mono break-all sm:break-normal sm:wrap-break-word">{row.value}</div>
+                          ) : (
+                            <div className="truncate font-mono" title={row.value}>
+                              {row.value}
+                            </div>
+                          )}
+                          {/* Source and Details are hidden on phones too, so their text sits under the value */}
+                          {(prefs.cols.source || details) && (
+                            <div className="mt-1 space-y-0.5 text-xs text-zinc-500 sm:hidden dark:text-zinc-400">
+                              {prefs.cols.source && (
+                                <div className="truncate">{sourceOf.get(key)?.join(", ") ?? "Scraper run"}</div>
+                              )}
+                              {details && <div className="truncate">{details}</div>}
+                            </div>
+                          )}
                         </td>
-                        <td className="px-2 py-3 whitespace-nowrap sm:px-4">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {href && (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title="Open"
-                                aria-label={`Open ${row.value}`}
-                                className={`${ACTION_BTN} ${ACTION_IDLE}`}
+                        {prefs.cols.source && (
+                          <td className={`hidden px-4 sm:table-cell ${cellY}`}>
+                            <SourceCell names={sourceOf.get(key)} onPick={setUser} />
+                          </td>
+                        )}
+                        {prefs.cols.details && (
+                          <td
+                            className={`hidden px-4 text-xs whitespace-nowrap text-zinc-600 sm:table-cell dark:text-zinc-300 ${cellY}`}
+                          >
+                            {details}
+                          </td>
+                        )}
+                        {prefs.cols.actions && (
+                          <td className={`px-2 whitespace-nowrap sm:px-4 ${cellY}`}>
+                            <div className="flex items-center justify-end gap-1.5">
+                              {href && (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Open"
+                                  aria-label={`Open ${row.value}`}
+                                  className={`${ACTION_BTN} ${ACTION_IDLE}`}
+                                >
+                                  <Icon name="external" className="h-4 w-4" />
+                                </a>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => copy(row)}
+                                title={feedback?.key === key && feedback.kind === "copied" ? "Copied!" : "Copy"}
+                                aria-label={`Copy ${row.value}`}
+                                className={`${ACTION_BTN} ${
+                                  feedback?.key === key && feedback.kind === "copied" ? ACTION_DONE : ACTION_IDLE
+                                }`}
                               >
-                                <Icon name="external" className="h-4 w-4" />
-                              </a>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => copy(row)}
-                              title={feedback?.key === keyOf(row) && feedback.kind === "copied" ? "Copied!" : "Copy"}
-                              aria-label={`Copy ${row.value}`}
-                              className={`${ACTION_BTN} ${
-                                feedback?.key === keyOf(row) && feedback.kind === "copied" ? ACTION_DONE : ACTION_IDLE
-                              }`}
-                            >
-                              {feedback?.key === keyOf(row) && feedback.kind === "copied" ? (
-                                <Icon name="check" className="animate-pop h-4 w-4" />
-                              ) : (
-                                <Icon name="copy" className="h-4 w-4" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => share(row)}
-                              title={feedback?.key === keyOf(row) && feedback.kind === "shared" ? "Shared!" : "Share"}
-                              aria-label={`Share ${row.value}`}
-                              className={`${ACTION_BTN} ${
-                                feedback?.key === keyOf(row) && feedback.kind === "shared" ? ACTION_DONE : ACTION_IDLE
-                              }`}
-                            >
-                              {feedback?.key === keyOf(row) && feedback.kind === "shared" ? (
-                                <Icon name="check" className="animate-pop h-4 w-4" />
-                              ) : (
-                                <Icon name="share" className="h-4 w-4" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => askDelete([row])}
-                              title="Delete"
-                              aria-label={`Delete ${row.value}`}
-                              className={`${ACTION_BTN} ${ACTION_DANGER}`}
-                            >
-                              <Icon name="trash" className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
+                                {feedback?.key === key && feedback.kind === "copied" ? (
+                                  <Icon name="check" className="animate-pop h-4 w-4" />
+                                ) : (
+                                  <Icon name="copy" className="h-4 w-4" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => share(row)}
+                                title={feedback?.key === key && feedback.kind === "shared" ? "Shared!" : "Share"}
+                                aria-label={`Share ${row.value}`}
+                                className={`${ACTION_BTN} ${
+                                  feedback?.key === key && feedback.kind === "shared" ? ACTION_DONE : ACTION_IDLE
+                                }`}
+                              >
+                                {feedback?.key === key && feedback.kind === "shared" ? (
+                                  <Icon name="check" className="animate-pop h-4 w-4" />
+                                ) : (
+                                  <Icon name="share" className="h-4 w-4" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => askDelete([row])}
+                                title="Delete"
+                                aria-label={`Delete ${row.value}`}
+                                className={`${ACTION_BTN} ${ACTION_DANGER}`}
+                              >
+                                <Icon name="trash" className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -887,10 +1543,23 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
               {rows.length === 0 && (
                 <p className="p-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
                   No contacts match this filter or search.
+                  {chips.length > 0 && (
+                    <>
+                      {" "}
+                      <button
+                        type="button"
+                        onClick={() => setTableFilters(NO_FILTERS)}
+                        className="font-medium text-zinc-900 underline underline-offset-2 dark:text-zinc-100"
+                      >
+                        Clear filters
+                      </button>
+                    </>
+                  )}
                 </p>
               )}
             </div>
           )}
+          {contacts.length > 0 && pager}
         </div>
       </main>
 

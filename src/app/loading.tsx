@@ -33,6 +33,11 @@ export default function Loading() {
         </div>
 
         <div className="px-4 py-5 sm:px-6">
+          {/* the Filters and Customize buttons */}
+          <div className="mb-3 flex animate-pulse items-center justify-between">
+            <div className="h-8 w-24 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
+            <div className="h-8 w-28 rounded-lg bg-zinc-100 dark:bg-zinc-900" />
+          </div>
           <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
             <div className="h-10 animate-pulse bg-zinc-50 dark:bg-zinc-900" />
             <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
