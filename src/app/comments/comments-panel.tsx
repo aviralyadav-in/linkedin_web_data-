@@ -46,7 +46,6 @@ import { commentsHref, commentsResult } from "./comments-result";
 // linkedin_comments.py / api.py limits and defaults
 const MAX_COMMENTS = 5000;
 const DEFAULT_LIMIT = 200;
-const PASSES = 5; // the API's default: linkedin_comments.py reads the list this many times
 const PAGE = 50; // comments rendered at a time
 const LOOKUP_ROWS = 6;
 const RUN_ID_RE = /^[\w-]{1,64}$/;
@@ -214,13 +213,6 @@ function downloadContactsCsv(result: CommentsResult, rows: CommentContact[], sou
     ].join(",");
   });
   saveCsv(head, lines, `contacts_${result.username}.csv`);
-}
-
-// About 10 comments load per scroll, each taking ~3.5 s, for every pass; plus opening LinkedIn.
-function roughTime(limit: number, passes: number) {
-  const seconds = 20 + passes * Math.ceil(limit / 10) * 3.5;
-  const minutes = Math.max(1, Math.round(seconds / 60));
-  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 
 type View = { id: string; run: Run | null; result: CommentsResult | null; loaded: boolean; gone: boolean };
@@ -612,7 +604,7 @@ function LookupForm({
   onStart: (profile: string, limit: number | null, contacts: boolean) => void;
 }) {
   const [profile, setProfile] = useState("");
-  const [mode, setMode] = useState<"all" | "contacts">("all");
+  const [mode, setMode] = useState<"all" | "contacts">("contacts");
   const [unlimited, setUnlimited] = useState(false);
   const [limit, setLimit] = useState(String(DEFAULT_LIMIT));
 
@@ -630,20 +622,13 @@ function LookupForm({
 
   return (
     <form onSubmit={submit} className={`${CARD} shadow-sm`} aria-labelledby="lookup-title">
-      <div className="flex items-start gap-3 border-b border-zinc-200 bg-gradient-to-r from-zinc-50 to-transparent px-4 py-4 sm:px-5 dark:border-zinc-800 dark:from-zinc-900/60">
+      <div className="flex items-center gap-3 border-b border-zinc-200 bg-gradient-to-r from-zinc-50 to-transparent px-4 py-4 sm:px-5 dark:border-zinc-800 dark:from-zinc-900/60">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-600 text-white shadow-md shadow-zinc-900/20 dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900">
           <Icon name="message" />
         </span>
-        <div className="min-w-0">
-          <h2 id="lookup-title" className="text-base font-semibold tracking-tight">
-            Find comments
-          </h2>
-          <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-            Reads the account&apos;s Activity → Comments page on LinkedIn: each comment, when it was written and the
-            post it is on. Comments aren&apos;t saved to the database. Like any profile visit, the account may see it
-            under &quot;Who viewed your profile&quot;.
-          </p>
-        </div>
+        <h2 id="lookup-title" className="min-w-0 text-base font-semibold tracking-tight">
+          Find comments
+        </h2>
       </div>
 
       <div className="space-y-4 px-4 py-4 sm:px-5">
@@ -689,7 +674,7 @@ function LookupForm({
 
         <fieldset>
           <legend className="text-sm font-medium">Get</legend>
-          <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+          <div className="mt-1.5 grid gap-2">
             {(
               [
                 { value: "all", title: "All comments", text: "Every comment, with the post it is on." },
@@ -776,15 +761,6 @@ function LookupForm({
             </>
           )}
         </div>
-
-        <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-400">
-          LinkedIn leaves a few comments out of this list every time it loads it, so the list is read up to {PASSES} times
-          and the results are combined. It stops at the first time nothing new turns up.
-          {unlimited
-            ? " With Unlimited the whole list is read each time: about 3 minutes for every 100 comments the account has."
-            : limitOk && ` ${contacts ? "The comments take" : "This lookup takes"} up to ~${roughTime(limitN, PASSES)}.`}
-          {contacts && " Then every post of the account is opened with all its comments: about half a minute per post."}
-        </p>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
           {blockedReason && <p className="text-xs text-zinc-500 sm:mr-auto dark:text-zinc-400">{blockedReason}</p>}
