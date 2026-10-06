@@ -26,7 +26,7 @@ export type RunStatus = "running" | "succeeded" | "failed" | "stopped" | "interr
 
 export type Run = {
   id: string;
-  kind: "scrape" | "session_import" | "session_check" | "comments";
+  kind: "scrape" | "session_import" | "session_check" | "comments" | "authors";
   title: string;
   command_id: string | null;
   values: Record<FieldName, number> | null;
@@ -51,6 +51,9 @@ export type Run = {
   comments_found?: number; // comments read
   contacts_found?: number; // contacts_only runs: contacts found
   posts_found?: number; // contacts_only runs: posts of the account read (missing from an older API)
+  // "authors" runs (linkedin_authors.py), with comments_found and contacts_found above
+  authors_found?: number; // authors of the posts the account commented on
+  profiles_read?: number; // of those, the profiles opened so far
 };
 
 export type ScraperStatus = { busy: boolean; current: Run | null; last: Run | null };
@@ -115,3 +118,54 @@ export type CommentsResult = {
 };
 
 export type CommentsResponse = { run: Run; result: CommentsResult | null };
+
+// Where one of the account's comments is: its link and the link of the post it is on (as User comments' Open
+// comment and Open post), and when it was written
+export type AuthorLink = { id: string; post_url: string | null; comment_url: string | null; date: string | null };
+
+// One author of the posts an account commented on, as linkedin_authors.py saves it
+export type AuthorEntry = {
+  name: string;
+  profile: string; // https://www.linkedin.com/in/<name>/ (or /company/... for a page)
+  kind: "person" | "company";
+  posts: number; // how many of the account's commented posts this author wrote
+  post_url: string | null; // the newest of them
+  // waiting: not opened yet; read: About read; not_found: no such profile; failed: didn't load;
+  // company: a company page, listed but not opened
+  status: "waiting" | "read" | "not_found" | "failed" | "company";
+  about: string;
+  // from the About section and Contact info, or else from one of the author's posts; each once, with where it was
+  // found (missing in older files: About)
+  contacts: { type: ContactType; value: string; found_in?: ("about" | "contact_info" | "post")[] }[];
+  // the links to the account's comments on this author's posts, newest first (files from a short-lived version
+  // kept each comment whole: UserComment; the oldest files: none)
+  comments?: (AuthorLink | UserComment)[];
+  contact_info?: "read" | "none" | "failed" | null; // none: LinkedIn didn't show it; null: not opened
+  // only when the About section and Contact info had no contacts: the author's newest posts found and how many of
+  // them were read (until one had contact details), and the post the contacts are from; null: not looked in
+  own_posts_found?: number | null;
+  own_posts_read?: number | null;
+  contact_post?: string | null;
+  posts_note?: string; // why their posts didn't load
+  note?: string; // why it failed
+};
+
+export type AuthorsResult = {
+  username: string;
+  profile: string;
+  name: string | null;
+  limit: number | null; // null: no limit
+  passes: number;
+  mode: "authors";
+  complete: boolean;
+  reached_end: boolean;
+  updated_at: string | null;
+  comments_read: number;
+  posts: number | null; // the posts the comments are on (by others); null: not known yet
+  authors: AuthorEntry[];
+  profiles_total: number | null; // the people among the authors, whose profiles are opened
+  profiles_read: number;
+  contacts: { type: ContactType; value: string; authors: string[] }[];
+};
+
+export type AuthorsResponse = { run: Run; result: AuthorsResult | null };

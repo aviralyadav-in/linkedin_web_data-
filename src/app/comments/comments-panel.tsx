@@ -44,18 +44,18 @@ import PageTabs from "../page-tabs";
 import { commentsHref, commentsResult } from "./comments-result";
 
 // linkedin_comments.py / api.py limits and defaults
-const MAX_COMMENTS = 5000;
-const DEFAULT_LIMIT = 200;
+export const MAX_COMMENTS = 5000;
+export const DEFAULT_LIMIT = 200;
 const PAGE = 50; // comments rendered at a time
 const LOOKUP_ROWS = 6;
-const RUN_ID_RE = /^[\w-]{1,64}$/;
+export const RUN_ID_RE = /^[\w-]{1,64}$/;
 
 // The same rules as linkedin_comments.py's parse_profile: a username, or a linkedin.com/in/<username> URL.
 // Letters of any script with their vowel signs and other marks (\p{M}), digits, - and _.
 const PROFILE_URL_RE = /^(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([^/?#\s]+)\/?(?:[/?#]\S*)?$/i;
 const USERNAME_RE = /^[\p{L}\p{N}][\p{L}\p{M}\p{N}_-]{2,99}$/u;
 
-function parseProfile(text: string) {
+export function parseProfile(text: string) {
   const t = text.trim();
   const m = PROFILE_URL_RE.exec(t);
   let name = m ? m[1] : t.replace(/^@/, "").replace(/\/+$/, "");
@@ -69,10 +69,10 @@ function parseProfile(text: string) {
   return USERNAME_RE.test(name) ? name : null;
 }
 
-const profileUrl = (name: string) => `https://www.linkedin.com/in/${encodeURIComponent(name)}/`;
+export const profileUrl = (name: string) => `https://www.linkedin.com/in/${encodeURIComponent(name)}/`;
 
 // only plain https links are rendered as links (the data comes from scraped pages)
-const safeUrl = (url: string | null | undefined) => (url && /^https:\/\//i.test(url) ? url : null);
+export const safeUrl = (url: string | null | undefined) => (url && /^https:\/\//i.test(url) ? url : null);
 
 // the counts in the result file are the real ones; the run's own counts can lag behind them
 const withCount = (run: Run, result: CommentsResult | null): Run =>
@@ -118,19 +118,19 @@ function commentDate(c: UserComment) {
 
 // Excel would run a cell starting with = + - @ as a formula; a leading ' keeps it text. (The dashboard's ="..."
 // wrapper can't be used here: Excel cuts formula text at 255 characters.)
-function csvCell(value: string | null | undefined) {
+export function csvCell(value: string | null | undefined) {
   const v = value ?? "";
   return `"${(/^[=+\-@\t\r]/.test(v) ? `'${v}` : v).replace(/"/g, '""')}"`;
 }
 
 // A contact value is short, so it gets the dashboard's ="..." wrapper: it also stops Excel from turning a phone
 // number into 9.18E+11.
-function valueCell(value: string) {
+export function valueCell(value: string) {
   const escaped = value.replace(/"/g, '""');
   return /^[=+\-@\t\r\d]/.test(value) ? `="${escaped}"` : `"${escaped}"`;
 }
 
-function saveCsv(head: string[], lines: string[], filename: string) {
+export function saveCsv(head: string[], lines: string[], filename: string) {
   // BOM so Excel reads the file as UTF-8; CRLF is what Excel expects
   const blob = new Blob(["﻿" + [head.map(csvCell).join(","), ...lines].join("\r\n")], {
     type: "text/csv;charset=utf-8",
@@ -1307,7 +1307,7 @@ function ContactCard({
 }
 
 // The script's raw output, loaded only when opened; it follows new lines unless scrolled up.
-function OutputLog({ runId, running }: { runId: string; running: boolean }) {
+export function OutputLog({ runId, running }: { runId: string; running: boolean }) {
   const [open, setOpen] = useState(false);
   const [log, setLog] = useState({ lines: [] as string[], received: 0, loaded: false, gone: false });
   const nextRef = useRef(0);

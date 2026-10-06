@@ -1,11 +1,13 @@
 import Link from "next/link";
 
 const TABS = [
-  { key: "commands", href: "/commands", label: "Commands" },
-  { key: "comments", href: "/comments", label: "User comments" },
+  { key: "commands", href: "/commands", label: "Commands", short: "Commands" },
+  { key: "comments", href: "/comments", label: "User comments", short: "User comments" },
+  { key: "authors", href: "/comments/authors", label: "User comments account data", short: "Account data" },
 ] as const;
 
-// Switches between the scraper's two pages; in the header of both. On a phone it takes its own row.
+// Switches between the scraper's pages; in the header of each. On a phone it takes its own row, with a shorter
+// name for the third tab so all three fit.
 export default function PageTabs({ active }: { active: (typeof TABS)[number]["key"] }) {
   return (
     <nav
@@ -23,7 +25,14 @@ export default function PageTabs({ active }: { active: (typeof TABS)[number]["ke
               : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
           }`}
         >
-          {tab.label}
+          {tab.short === tab.label ? (
+            tab.label
+          ) : (
+            <>
+              <span className="sm:hidden">{tab.short}</span>
+              <span className="hidden sm:inline">{tab.label}</span>
+            </>
+          )}
         </Link>
       ))}
     </nav>

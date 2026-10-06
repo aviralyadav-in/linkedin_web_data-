@@ -13,6 +13,7 @@ import type {
   ScraperStatus,
 } from "@/lib/scraper-types";
 
+import { authorsHref, authorsResult } from "../comments/authors/authors-result";
 import { commentsHref, commentsResult } from "../comments/comments-result";
 import PageTabs from "../page-tabs";
 
@@ -212,6 +213,7 @@ function runName(run: Run) {
   if (run.kind === "comments") {
     return `${run.contacts_only ? "Contacts from comments" : "Comments"}: ${run.username ?? "a profile"}`;
   }
+  if (run.kind === "authors") return `Authors' contacts: ${run.username ?? "a profile"}`;
   const v = run.values;
   if (!v) return "Scraper run";
   if (v.commented_posts === 0) return v.scrolls === 0 ? "Feed only · first screen" : "Feed only";
@@ -222,7 +224,7 @@ function runName(run: Run) {
 
 // a User comments run's count for the history: its comments, or the contacts found in them
 const commentsCount = (run: Run) =>
-  run.contacts_only ? `${run.contacts_found ?? 0} contacts` : `${run.comments_found ?? 0} comments`;
+  run.contacts_only || run.kind === "authors" ? `${run.contacts_found ?? 0} contacts` : `${run.comments_found ?? 0} comments`;
 
 function phaseLabel(phase: string | null) {
   const n = /^Step (\d)/.exec(phase ?? "")?.[1];
@@ -1174,6 +1176,7 @@ function RunPanel({
   const elapsed = end === null ? null : end - run.started_at;
   const scrape = run.kind === "scrape";
   const comments = run.kind === "comments";
+  const authors = run.kind === "authors"; // User comments account data
   const progress = progressText(run.progress);
   const elsewhere = current?.status === "running" && !isCurrent ? current : null;
 
@@ -1221,14 +1224,16 @@ function RunPanel({
             <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
               <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                 <Icon name="users" className="h-3 w-3" />
-                {comments ? (run.contacts_only ? "Contacts" : "Comments") : "New contacts"}
+                {authors ? "Contacts" : comments ? (run.contacts_only ? "Contacts" : "Comments") : "New contacts"}
               </dt>
               <dd className="mt-0.5 font-semibold tabular-nums">
                 {scrape
                   ? run.new_contacts
-                  : comments
-                    ? ((run.contacts_only ? run.contacts_found : run.comments_found) ?? 0)
-                    : "–"}
+                  : authors
+                    ? (run.contacts_found ?? 0)
+                    : comments
+                      ? ((run.contacts_only ? run.contacts_found : run.comments_found) ?? 0)
+                      : "–"}
               </dd>
             </div>
             <div className="rounded-lg bg-zinc-50 px-2.5 py-2 dark:bg-zinc-900">
@@ -1250,12 +1255,17 @@ function RunPanel({
           )}
           {!scrape && (
             <p className="text-sm text-zinc-700 dark:text-zinc-200">
-              {comments ? commentsResult(run) : sessionResult(run)}
+              {authors ? authorsResult(run) : comments ? commentsResult(run) : sessionResult(run)}
             </p>
           )}
           {comments && (
             <Link href={commentsHref(run.id)} className="inline-flex text-xs font-medium underline-offset-2 hover:underline">
               Open in User comments
+            </Link>
+          )}
+          {authors && (
+            <Link href={authorsHref(run.id)} className="inline-flex text-xs font-medium underline-offset-2 hover:underline">
+              Open in User comments account data
             </Link>
           )}
 
@@ -1381,7 +1391,7 @@ function History({ runs, viewId, onShow }: { runs: Run[]; viewId?: string; onSho
                   <span className="mt-0.5 block text-xs tabular-nums text-zinc-500 sm:hidden dark:text-zinc-400">
                     <LocalTime epoch={run.started_at} />
                     {run.kind === "scrape" && ` · ${run.new_contacts} new`}
-                    {run.kind === "comments" && ` · ${commentsCount(run)}`}
+                    {(run.kind === "comments" || run.kind === "authors") && ` · ${commentsCount(run)}`}
                   </span>
                 </span>
                 <span className="hidden text-right text-xs tabular-nums text-zinc-500 sm:block dark:text-zinc-400">
@@ -1389,7 +1399,9 @@ function History({ runs, viewId, onShow }: { runs: Run[]; viewId?: string; onSho
                     <LocalTime epoch={run.started_at} />
                   </span>
                   {run.kind === "scrape" && <span className="block">{run.new_contacts} new</span>}
-                  {run.kind === "comments" && <span className="block">{commentsCount(run)}</span>}
+                  {(run.kind === "comments" || run.kind === "authors") && (
+                    <span className="block">{commentsCount(run)}</span>
+                  )}
                 </span>
                 <StatusPill status={run.status} />
               </button>

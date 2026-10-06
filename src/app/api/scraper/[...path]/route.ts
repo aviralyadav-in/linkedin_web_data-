@@ -5,8 +5,16 @@ import { scraperConfigured, scraperFetch } from "@/lib/scraper";
 // Only these scraper API calls can be made from the browser.
 const ID = "[\\w-]{1,64}";
 const ALLOWED: Record<string, RegExp[]> = {
-  GET: [/^commands$/, /^status$/, /^runs$/, new RegExp(`^runs/${ID}$`), /^help$/, new RegExp(`^comments/${ID}$`)],
-  POST: [/^runs$/, new RegExp(`^runs/${ID}/stop$`), /^session\/import$/, /^session\/check$/, /^comments$/],
+  GET: [
+    /^commands$/,
+    /^status$/,
+    /^runs$/,
+    new RegExp(`^runs/${ID}$`),
+    /^help$/,
+    new RegExp(`^comments/${ID}$`),
+    new RegExp(`^authors/${ID}$`),
+  ],
+  POST: [/^runs$/, new RegExp(`^runs/${ID}/stop$`), /^session\/import$/, /^session\/check$/, /^comments$/, /^authors$/],
 };
 
 const error = (detail: string, status: number) => Response.json({ detail }, { status });
