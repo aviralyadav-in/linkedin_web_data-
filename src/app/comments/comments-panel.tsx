@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hrefFor } from "@/lib/contact-links";
 import type {
   CommentContact,
@@ -47,7 +48,6 @@ import { commentsHref, commentsResult } from "./comments-result";
 export const MAX_COMMENTS = 5000;
 export const DEFAULT_LIMIT = 200;
 const PAGE = 50; // comments rendered at a time
-const LOOKUP_ROWS = 6;
 export const RUN_ID_RE = /^[\w-]{1,64}$/;
 
 // The same rules as linkedin_comments.py's parse_profile: a username, or a linkedin.com/in/<username> URL.
@@ -105,6 +105,21 @@ function errorText(e: unknown, unlimited = false) {
   if (status === 500) return "The scraper API couldn't start the lookup. Check the API's own output for details.";
   if (status === 0 || status === 502 || status === 503) return "Can't reach the scraper API. Is it running?";
   return `Something went wrong (HTTP ${status}).`;
+}
+
+// A lookup that stopped part-way (it failed, was stopped, or the API stopped while it ran) can go on from where it
+// stopped; not one that finished, or one whose profile doesn't exist (exit 5) or was no profile at all (exit 2).
+export const continuable = (run: Run, complete: boolean | undefined) =>
+  (run.status === "failed" || run.status === "stopped" || run.status === "interrupted") &&
+  run.exit_code !== 2 &&
+  run.exit_code !== 5 &&
+  !complete;
+
+export function continueErrorText(e: unknown) {
+  const status = e instanceof ApiError ? e.status : 0;
+  if (status === 422) return "This lookup can't be continued: it has finished, or its files are gone from the scraper API.";
+  if (status === 404) return `The scraper API can't continue this lookup. ${RESTART_API}, then try again.`;
+  return errorText(e);
 }
 
 function commentDate(c: UserComment) {
@@ -242,7 +257,7 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
     return { id, run: known.find((r) => r?.id === id) ?? null, result: null, loaded: false, gone: false };
   });
   const [message, setMessage] = useState<string | null>(null);
-  const [pending, setPending] = useState<"start" | "stop" | null>(null);
+  const [pending, setPending] = useState<"start" | "stop" | "continue" | null>(null);
 
   const busy = status?.busy ?? false;
   const busyRef = useRef(busy);
@@ -466,12 +481,33 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
     }
   }
 
+  // a lookup that stopped part-way goes on from where it stopped: a new run that starts with what it found
+  async function goOn(id: string) {
+    setPending("continue");
+    setMessage(null);
+    try {
+      const run = await post<Run>(`comments/${id}/resume`);
+      busyRef.current = true;
+      followedRef.current = run.id;
+      setStatus((s) => ({ busy: true, current: run, last: s?.last ?? null }));
+      open(run);
+      pollSoonRef.current(); // switch the status poll to its fast, running pace
+    } catch (e) {
+      setMessage(continueErrorText(e));
+    } finally {
+      setPending(null);
+    }
+  }
+
   const current = status?.current ?? null;
   const offline = configured && link !== "online";
   const blocked = busy || offline || pending !== null;
   const shown = view?.run ? withCount(view.run, view.result) : null;
   // the newest copies of the runs in the list: the running job and the lookup on screen
   const fresh = [current, shown].filter((r): r is Run => r !== null);
+  // another lookup runs while an earlier one is on screen: offer to switch, like the Commands page does
+  const elsewhere =
+    current?.kind === "comments" && current.status === "running" && current.id !== view?.id ? current : null;
 
   // Screen readers hear status changes (and a login request), not the count going up on every scroll. The region
   // is always there, so the first lookup's start is announced too.
@@ -529,62 +565,76 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
             token is <Code>API_TOKEN</Code> from <Code>linkedin-2/.env</Code>), then restart this app.
           </Notice>
         ) : (
-          // On a phone: form, results, earlier lookups. On a wide screen the results take the right side; the
-          // auto/1fr rows keep the lookups right under the form however long the results get.
-          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:grid-rows-[auto_1fr] lg:gap-7">
-            <div className="min-w-0 space-y-6">
-              {link === "offline" && (
-                <Notice title="Can't reach the scraper API">
-                  Start it in the <Code>linkedin-2</Code> folder with <Code>python api.py</Code> (on a server:{" "}
-                  <Code>sudo systemctl restart linkedin-api</Code>). This page keeps retrying on its own.
-                </Notice>
+          <div className="space-y-6">
+            {link === "offline" && (
+              <Notice title="Can't reach the scraper API">
+                Start it in the <Code>linkedin-2</Code> folder with <Code>python api.py</Code> (on a server:{" "}
+                <Code>sudo systemctl restart linkedin-api</Code>). This page keeps retrying on its own.
+              </Notice>
+            )}
+            {link === "token" && (
+              <Notice title="The API token doesn't match">
+                The API is running but rejects this app&apos;s token. <Code>SCRAPER_API_TOKEN</Code> in{" "}
+                <Code>linkedin-data/.env</Code> must equal <Code>API_TOKEN</Code> in <Code>linkedin-2/.env</Code>.
+                Restart both apps after changing it.
+              </Notice>
+            )}
+
+            {/* the form and the lookup's summary in one full-width card */}
+            <div className={`${CARD} overflow-hidden shadow-sm`}>
+              {view?.run?.status === "running" && (
+                <div className="h-0.5 w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800" aria-hidden="true">
+                  <div className="h-full w-1/3 rounded-full bg-zinc-500 animate-slide-x dark:bg-zinc-400" />
+                </div>
               )}
-              {link === "token" && (
-                <Notice title="The API token doesn't match">
-                  The API is running but rejects this app&apos;s token. <Code>SCRAPER_API_TOKEN</Code> in{" "}
-                  <Code>linkedin-data/.env</Code> must equal <Code>API_TOKEN</Code> in <Code>linkedin-2/.env</Code>.
-                  Restart both apps after changing it.
-                </Notice>
+              {elsewhere && (
+                <button
+                  type="button"
+                  onClick={() => open(elsewhere)}
+                  className="flex w-full items-center gap-2 border-b border-sky-200 bg-sky-50 px-4 py-2 text-left text-xs font-medium text-sky-800 transition-colors hover:bg-sky-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-inset dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-950"
+                >
+                  <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-500" />
+                  <span className="flex-1">A lookup for {elsewhere.username ?? "another account"} is running</span>
+                  <span className="underline underline-offset-2">Show it</span>
+                </button>
               )}
-              <LookupForm
-                blocked={blocked}
-                blockedReason={
-                  link === "token"
-                    ? "The scraper API rejects this app's token (see above)."
-                    : offline
-                      ? "The scraper API isn't reachable right now."
-                      : !busy
-                        ? null
-                        : current?.kind !== "comments"
-                          ? "A scraper run is in progress. Wait for it to finish, or stop it on the Commands page."
-                          : current.id === view?.id
-                            ? "A lookup is running. Wait for it to finish, or press Stop."
-                            : "Another lookup is running. Wait for it to finish, or open it and press Stop."
-                }
-                starting={pending === "start"}
-                onStart={start}
-              />
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+                <LookupForm
+                  blocked={blocked}
+                  blockedReason={
+                    link === "token"
+                      ? "The scraper API rejects this app's token (see above)."
+                      : offline
+                        ? "The scraper API isn't reachable right now."
+                        : !busy
+                          ? null
+                          : current?.kind !== "comments"
+                            ? "A scraper run is in progress. Wait for it to finish, or stop it on the Commands page."
+                            : current.id === view?.id
+                              ? "A lookup is running. Wait for it to finish, or press Stop."
+                              : "Another lookup is running. Wait for it to finish, or open it and press Stop."
+                  }
+                  starting={pending === "start"}
+                  onStart={start}
+                />
+                <Summary
+                  view={view}
+                  link={link}
+                  current={current}
+                  stopping={pending === "stop"}
+                  onStop={stop}
+                  blocked={blocked}
+                  continuing={pending === "continue"}
+                  onContinue={goOn}
+                />
+              </div>
             </div>
 
-            {/* scroll-mt clears the sticky header, which is two rows (title, tabs) on a phone */}
-            <section
-              ref={resultsRef}
-              aria-label="Comments"
-              className="min-w-0 scroll-mt-32 sm:scroll-mt-20 lg:col-start-2 lg:row-span-2 lg:row-start-1"
-            >
-              <Results
-                view={view}
-                link={link}
-                current={current}
-                stopping={pending === "stop"}
-                onStop={stop}
-                onShow={open}
-              />
+            {/* the comments (or contacts) as a table; the scraper output (the logs) sits at its bottom.
+                scroll-mt clears the sticky header, which is two rows (title, tabs) on a phone */}
+            <section ref={resultsRef} aria-label="Comments" className="min-w-0 scroll-mt-32 sm:scroll-mt-20">
+              <CommentsTable view={view} lookups={lookups} fresh={fresh} onShow={open} />
             </section>
-
-            <div className="min-w-0">
-              <Lookups runs={lookups} fresh={fresh} viewId={view?.id} onShow={open} />
-            </div>
           </div>
         )}
       </div>
@@ -621,7 +671,11 @@ function LookupForm({
   }
 
   return (
-    <form onSubmit={submit} className={`${CARD} shadow-sm`} aria-labelledby="lookup-title">
+    <form
+      onSubmit={submit}
+      className="flex min-w-0 flex-col border-b border-zinc-200 lg:border-r lg:border-b-0 dark:border-zinc-800"
+      aria-labelledby="lookup-title"
+    >
       <div className="flex items-center gap-3 border-b border-zinc-200 bg-gradient-to-r from-zinc-50 to-transparent px-4 py-4 sm:px-5 dark:border-zinc-800 dark:from-zinc-900/60">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-600 text-white shadow-md shadow-zinc-900/20 dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900">
           <Icon name="message" />
@@ -631,7 +685,7 @@ function LookupForm({
         </h2>
       </div>
 
-      <div className="space-y-4 px-4 py-4 sm:px-5">
+      <div className="flex flex-1 flex-col gap-4 px-4 py-4 sm:px-5">
         <div>
           <label htmlFor="profile" className="text-sm font-medium">
             LinkedIn username or profile URL
@@ -762,7 +816,7 @@ function LookupForm({
           )}
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+        <div className="mt-auto flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
           {blockedReason && <p className="text-xs text-zinc-500 sm:mr-auto dark:text-zinc-400">{blockedReason}</p>}
           <button
             type="submit"
@@ -778,58 +832,34 @@ function LookupForm({
   );
 }
 
-function Results({
+// The lookup's header: who it is about, its stat tiles and its outcome. The right half of the top card.
+function Summary({
   view,
   link,
   current,
   stopping,
   onStop,
-  onShow,
+  blocked,
+  continuing,
+  onContinue,
 }: {
   view: View | null;
   link: ApiLink;
   current: Run | null;
   stopping: boolean;
   onStop: (id: string) => void;
-  onShow: (run: Run) => void;
+  blocked: boolean;
+  continuing: boolean;
+  onContinue: (id: string) => void;
 }) {
   const run = view?.run ?? null;
   const running = run?.status === "running";
   const now = useNow(running);
   const result = view?.result ?? null;
-  const [query, setQuery] = useState("");
-  // how many comments are rendered; starts again at PAGE for another lookup or search
-  const [page, setPage] = useState({ key: "", n: PAGE });
-
-  const comments = useMemo(() => result?.comments ?? [], [result]);
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return comments;
-    return comments.filter((c) =>
-      [c.text, c.post.author, c.post.text, c.reply_to?.author, c.reply_to?.text].some((s) =>
-        s?.toLowerCase().includes(q),
-      ),
-    );
-  }, [comments, query]);
-  // Only contacts: the contacts, each shown with where it was found
-  const contacts = useMemo(() => result?.contacts ?? [], [result]);
-  const sources = useMemo(() => sourcesOf(result), [result]);
-  const filteredContacts = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return contacts;
-    return contacts.filter((t) => {
-      // the text its card shows: the account's comment, else the post or comment on its post, else the About section
-      const { comment: c, hit, about } = foundIn(t, sources);
-      const shown = c ? [c.text, c.post.author] : hit ? [hit.text, hit.author] : about ? [sources.about] : [];
-      return [t.value, TYPE_LABEL[t.type] ?? t.type, ...shown].some((s) => s?.toLowerCase().includes(q));
-    });
-  }, [contacts, sources, query]);
-  const pageKey = `${view?.id}|${query}`;
-  const shown = page.key === pageKey ? page.n : PAGE;
 
   if (!view) {
     return (
-      <div className={`${CARD} flex flex-col items-center px-6 py-14 text-center shadow-sm`}>
+      <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
         <span className="grid h-12 w-12 place-items-center rounded-full bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
           <Icon name="message" className="h-5 w-5" />
         </span>
@@ -858,31 +888,9 @@ function Results({
   const contactCount = result?.contacts ? result.contacts.length : (lookup?.contacts_found ?? 0);
   // posts of the account read; undefined from a scraper that only reads the comments
   const postCount = result ? result.posts_read : lookup?.posts_found;
-  // what the list shows: the comments, or with Only contacts the contacts found in them
-  const total = contactsMode ? contacts.length : comments.length;
-  const matches = contactsMode ? filteredContacts.length : filtered.length;
-  // another lookup runs while an earlier one is on screen: offer to switch, like the Commands page does
-  const elsewhere = current?.kind === "comments" && current.status === "running" && !isCurrent ? current : null;
 
   return (
-    <div className={`${CARD} overflow-hidden shadow-sm`}>
-      {running && (
-        <div className="h-0.5 w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800" aria-hidden="true">
-          <div className="h-full w-1/3 rounded-full bg-zinc-500 animate-slide-x dark:bg-zinc-400" />
-        </div>
-      )}
-      {elsewhere && (
-        <button
-          type="button"
-          onClick={() => onShow(elsewhere)}
-          className="flex w-full items-center gap-2 border-b border-sky-200 bg-sky-50 px-4 py-2 text-left text-xs font-medium text-sky-800 transition-colors hover:bg-sky-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-inset dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-950"
-        >
-          <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-500" />
-          <span className="flex-1">A lookup for {elsewhere.username ?? "another account"} is running</span>
-          <span className="underline underline-offset-2">Show it</span>
-        </button>
-      )}
-      <div className="space-y-4 bg-gradient-to-b from-zinc-50/90 to-transparent p-4 sm:p-5 dark:from-zinc-900/50">
+    <div className="min-w-0 space-y-4 bg-gradient-to-b from-zinc-50/90 to-transparent p-4 sm:p-5 dark:from-zinc-900/50">
         <div className="flex items-start justify-between gap-3">
           {/* a div, not a span: the tests (and styles) treat span.rounded-full as a badge/status pill */}
           <div
@@ -998,74 +1006,232 @@ function Results({
             {stopping ? "Stopping..." : "Stop"}
           </button>
         )}
-      </div>
 
-      {total > 0 && result && (
-        <div className="flex flex-col gap-2 border-t border-zinc-200 bg-zinc-50/60 px-4 py-3 sm:flex-row sm:items-center sm:px-5 dark:border-zinc-800 dark:bg-zinc-900/30">
-          <label className="relative min-w-0 flex-1">
-            <span className="sr-only">{contactsMode ? "Search these contacts" : "Search these comments"}</span>
-            <Icon name="search" className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={contactsMode ? "Search contacts and their comments" : "Search comments and posts"}
-              className="block w-full rounded-lg border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-hidden focus:ring-2 focus:ring-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-zinc-700"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() =>
-              contactsMode ? downloadContactsCsv(result, filteredContacts, sources) : downloadCsv(result, filtered)
-            }
-            className={SECONDARY}
-          >
-            <Icon name="download" />
-            {query.trim() ? `CSV (${matches})` : "CSV"}
-          </button>
-        </div>
-      )}
-
-      {total > 0 && (
-        <>
-          {query.trim() && (
-            <p className="border-t border-zinc-200 px-4 py-2 text-xs text-zinc-500 sm:px-5 dark:border-zinc-800 dark:text-zinc-400">
-              {matches} of {total} {contactsMode ? "contacts" : "comments"} match.
-            </p>
-          )}
-          <ul className="divide-y divide-zinc-200 border-t border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-            {contactsMode
-              ? filteredContacts
-                  .slice(0, shown)
-                  .map((t) => <ContactCard key={`${t.type}:${t.value}`} contact={t} sources={sources} profile={profile} />)
-              : filtered.slice(0, shown).map((c) => <CommentCard key={c.id} comment={c} />)}
-          </ul>
-          {matches > shown && (
+        {lookup && continuable(lookup, result?.complete) && (
+          <div className="space-y-1.5">
             <button
               type="button"
-              onClick={() => setPage({ key: pageKey, n: shown + PAGE })}
-              className="w-full border-t border-zinc-200 px-4 py-3 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900/60"
+              onClick={() => onContinue(view.id)}
+              disabled={blocked}
+              className={`${PRIMARY} w-full`}
             >
-              Show {Math.min(PAGE, matches - shown)} more ({matches - shown} left)
+              <Icon name="play" />
+              {continuing ? "Continuing..." : "Continue from here"}
             </button>
-          )}
-        </>
-      )}
-
-      {!view.loaded && (
-        <p className="border-t border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500 sm:px-5 dark:border-zinc-800 dark:text-zinc-400">
-          Loading...
-        </p>
-      )}
-
-      {lookup && <OutputLog key={lookup.id} runId={lookup.id} running={running} />}
+            <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              A new run keeps the {contactsMode ? "comments, contacts and posts" : "comments"} found so far and goes on
+              from where this lookup stopped, not from the beginning.
+            </p>
+          </div>
+        )}
     </div>
   );
 }
 
-function CommentCard({ comment: c }: { comment: UserComment }) {
+// the sticky header cell of the table
+const TH =
+  "sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 text-left font-medium whitespace-nowrap sm:px-5 dark:border-zinc-800 dark:bg-zinc-900";
+
+// The comments (or, with Only contacts, the contacts) as a compact table in a fixed frame: the rows scroll
+// inside it, not the page. The toolbar holds the earlier-lookups picker, the search and the CSV download;
+// the scraper output (the logs) closes the card.
+function CommentsTable({
+  view,
+  lookups,
+  fresh,
+  onShow,
+}: {
+  view: View | null;
+  lookups: Run[];
+  fresh: Run[];
+  onShow: (run: Run) => void;
+}) {
+  const [query, setQuery] = useState("");
+  // how many rows are rendered; starts again at PAGE for another lookup or search
+  const [page, setPage] = useState({ key: "", n: PAGE });
+  const run = view?.run ?? null;
+  const lookup = run?.kind === "comments" ? run : null;
+  const running = run?.status === "running";
+  const result = view?.result ?? null;
+  const profile = safeUrl(lookup?.profile ?? result?.profile ?? null);
+  const contactsMode = contactsOnly(lookup, result);
+
+  const comments = useMemo(() => result?.comments ?? [], [result]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return comments;
+    return comments.filter((c) =>
+      [c.text, c.post.author, c.post.text, c.reply_to?.author, c.reply_to?.text].some((s) =>
+        s?.toLowerCase().includes(q),
+      ),
+    );
+  }, [comments, query]);
+  // Only contacts: the contacts, each shown with where it was found
+  const contacts = useMemo(() => result?.contacts ?? [], [result]);
+  const sources = useMemo(() => sourcesOf(result), [result]);
+  const filteredContacts = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return contacts;
+    return contacts.filter((t) => {
+      // the text its row shows: the account's comment, else the post or comment on its post, else the About section
+      const { comment: c, hit, about } = foundIn(t, sources);
+      const shownText = c ? [c.text, c.post.author] : hit ? [hit.text, hit.author] : about ? [sources.about] : [];
+      return [t.value, TYPE_LABEL[t.type] ?? t.type, ...shownText].some((s) => s?.toLowerCase().includes(q));
+    });
+  }, [contacts, sources, query]);
+  // what the table shows: the comments, or with Only contacts the contacts found in them
+  const total = contactsMode ? contacts.length : comments.length;
+  const matches = contactsMode ? filteredContacts.length : filtered.length;
+  const pageKey = `${view?.id}|${query}`;
+  const shownN = page.key === pageKey ? page.n : PAGE;
+
+  // the picker's rows: the earlier lookups (with live counts), plus the one on screen if it isn't listed yet
+  const options = useMemo(() => {
+    const merged = lookups.map((listed) => fresh.find((f) => f.id === listed.id) ?? listed);
+    const shownRun = view?.run;
+    if (shownRun && shownRun.kind === "comments" && !merged.some((r) => r.id === shownRun.id)) merged.unshift(shownRun);
+    return merged;
+  }, [lookups, fresh, view]);
+
+  return (
+    <div className={`${CARD} overflow-hidden shadow-sm`}>
+      <div className="flex flex-col gap-2 border-b border-zinc-200 bg-zinc-50/60 px-4 py-3 sm:px-5 lg:flex-row lg:items-center dark:border-zinc-800 dark:bg-zinc-900/30">
+        {options.length > 0 && (
+          <Select
+            value={view?.id ?? ""}
+            onValueChange={(id) => {
+              const picked = options.find((r) => r.id === id);
+              if (picked) onShow(picked);
+            }}
+          >
+            <SelectTrigger aria-label="Earlier lookups" title="Earlier lookups" className="w-full shrink-0 lg:w-80">
+              <SelectValue placeholder="Earlier lookups" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  <span className="font-medium">{r.username ?? r.title}</span>
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    {" "}
+                    · <LocalTime epoch={r.started_at} /> ·{" "}
+                    {r.contacts_only ? `${r.contacts_found ?? 0} contacts` : `${r.comments_found ?? 0} comments`} ·{" "}
+                    {STATUS[r.status].label}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <label className="relative min-w-0 flex-1">
+          <span className="sr-only">{contactsMode ? "Search these contacts" : "Search these comments"}</span>
+          <Icon name="search" className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={contactsMode ? "Search contacts and their comments" : "Search comments and posts"}
+            className="block w-full rounded-lg border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-hidden focus:ring-2 focus:ring-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-zinc-700"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() =>
+            result &&
+            (contactsMode ? downloadContactsCsv(result, filteredContacts, sources) : downloadCsv(result, filtered))
+          }
+          disabled={!result || matches === 0}
+          className={SECONDARY}
+        >
+          <Icon name="download" />
+          {query.trim() ? `CSV (${matches})` : "CSV"}
+        </button>
+      </div>
+
+      {!view ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">
+          The comments show up here as a table once a lookup runs.
+        </p>
+      ) : !view.loaded ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">Loading...</p>
+      ) : view.gone ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">
+          This lookup is no longer on the scraper API.
+        </p>
+      ) : total === 0 ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">
+          {running
+            ? `Reading the comments... ${contactsMode ? "contacts" : "they"} show up here as they are found.`
+            : contactsMode
+              ? "No contacts in this lookup."
+              : "No comments in this lookup."}
+        </p>
+      ) : matches === 0 ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">
+          No {contactsMode ? "contacts" : "comments"} match this search.
+        </p>
+      ) : (
+        <>
+          <p className="border-b border-zinc-200 px-4 py-2 text-xs text-zinc-500 sm:px-5 dark:border-zinc-800 dark:text-zinc-400">
+            {query.trim()
+              ? `${matches} of ${total} ${contactsMode ? "contacts" : "comments"} match.`
+              : `${total} ${contactsMode ? (total === 1 ? "contact" : "contacts") : total === 1 ? "comment" : "comments"}.`}
+          </p>
+          {/* the fixed frame: the table scrolls in here, sideways too when it needs more room */}
+          <div className="max-h-[62dvh] overflow-auto overscroll-contain">
+            {contactsMode ? (
+              <table className="w-full min-w-4xl table-fixed text-sm">
+                <thead className="text-xs tracking-wide text-zinc-500 uppercase dark:text-zinc-400">
+                  <tr>
+                    <th className={`${TH} w-28`}>Type</th>
+                    <th className={`${TH} w-80`}>Contact</th>
+                    <th className={TH}>Found in</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {filteredContacts.slice(0, shownN).map((t) => (
+                    <ContactRow key={`${t.type}:${t.value}`} contact={t} sources={sources} profile={profile} />
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table className="w-full min-w-6xl table-fixed text-sm">
+                <thead className="text-xs tracking-wide text-zinc-500 uppercase dark:text-zinc-400">
+                  <tr>
+                    <th className={`${TH} w-40`}>Date</th>
+                    <th className={TH}>Comment</th>
+                    <th className={`${TH} w-64`}>Reply to</th>
+                    <th className={`${TH} w-80`}>On a post by</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {filtered.slice(0, shownN).map((c) => (
+                    <CommentRow key={c.id} comment={c} />
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {matches > shownN && (
+              <button
+                type="button"
+                onClick={() => setPage({ key: pageKey, n: shownN + PAGE })}
+                className="w-full border-t border-zinc-200 px-4 py-3 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900/60"
+              >
+                Show {Math.min(PAGE, matches - shownN)} more ({matches - shownN} left)
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {lookup && <OutputLog key={lookup.id} runId={lookup.id} running={running ?? false} />}
+    </div>
+  );
+}
+
+// One comment per row: when, the text, what it replies to, and the post it is on — every link kept clickable.
+function CommentRow({ comment: c }: { comment: UserComment }) {
   const [open, setOpen] = useState(false);
-  // "Show all" only when six lines really cut the text off, at this width
+  // "Show all" only when four lines really cut the text off, at this width
   const [clipped, setClipped] = useState(false);
   const textRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -1080,48 +1246,57 @@ function CommentCard({ comment: c }: { comment: UserComment }) {
   const postUrl = safeUrl(c.post.url);
   const authorUrl = safeUrl(c.post.author_url);
   return (
-    <li className="px-4 py-4 transition-colors hover:bg-zinc-50/70 sm:px-5 dark:hover:bg-zinc-900/30">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
-        <span className="font-medium text-zinc-700 tabular-nums dark:text-zinc-300">{commentDate(c)}</span>
+    <tr className="align-top transition-colors hover:bg-zinc-50/70 dark:hover:bg-zinc-900/30">
+      <td className="px-4 py-2.5 sm:px-5">
+        <div className="text-xs font-medium text-zinc-700 tabular-nums dark:text-zinc-300">{commentDate(c)}</div>
         {c.reply_to && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-300">
+          <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-300">
             <Icon name="reply" className="h-3 w-3" />
             Reply
           </span>
         )}
-        <span className="flex-1" />
         {url && (
-          <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:underline">
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 flex items-center gap-1 text-xs font-medium text-zinc-500 hover:underline dark:text-zinc-400"
+          >
             Open comment
             <Icon name="external" className="h-3 w-3" />
           </a>
         )}
-      </div>
-      <p
-        ref={textRef}
-        className={`mt-1.5 text-sm leading-relaxed break-words whitespace-pre-wrap ${open ? "" : "line-clamp-6"}`}
-      >
-        {c.text || <span className="text-zinc-400 italic">No text (an image or a reaction only)</span>}
-      </p>
-      {(clipped || open) && (
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          className="mt-1 text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
+      </td>
+      <td className="px-4 py-2.5 sm:px-5">
+        <p
+          ref={textRef}
+          className={`text-sm leading-relaxed break-words whitespace-pre-wrap ${open ? "" : "line-clamp-4"}`}
         >
-          {open ? "Show less" : "Show all"}
-        </button>
-      )}
-      {c.reply_to && (
-        <p className="mt-2 line-clamp-2 border-l-2 border-zinc-200 pl-3 text-xs leading-relaxed text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-          Replying to <span className="font-medium text-zinc-700 dark:text-zinc-300">{c.reply_to.author || "a comment"}</span>
-          {c.reply_to.text && `: ${c.reply_to.text}`}
+          {c.text || <span className="text-zinc-400 italic">No text (an image or a reaction only)</span>}
         </p>
-      )}
-      <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
-          <span className="text-zinc-500 dark:text-zinc-400">On a post by</span>
+        {(clipped || open) && (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            className="mt-1 text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
+          >
+            {open ? "Show less" : "Show all"}
+          </button>
+        )}
+      </td>
+      <td className="px-4 py-2.5 sm:px-5">
+        {c.reply_to ? (
+          <p className="line-clamp-3 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">{c.reply_to.author || "A comment"}</span>
+            {c.reply_to.text && `: ${c.reply_to.text}`}
+          </p>
+        ) : (
+          <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5 sm:px-5">
+        <div className="text-xs">
           {authorUrl ? (
             <a href={authorUrl} target="_blank" rel="noreferrer" className="font-medium hover:underline">
               {c.post.author || "someone"}
@@ -1129,19 +1304,23 @@ function CommentCard({ comment: c }: { comment: UserComment }) {
           ) : (
             <span className="font-medium">{c.post.author || "someone"}</span>
           )}
-          <span className="flex-1" />
-          {postUrl && (
-            <a href={postUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:underline">
-              Open post
-              <Icon name="external" className="h-3 w-3" />
-            </a>
-          )}
         </div>
         {c.post.text && (
-          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">{c.post.text}</p>
+          <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">{c.post.text}</p>
         )}
-      </div>
-    </li>
+        {postUrl && (
+          <a
+            href={postUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-0.5 flex items-center gap-1 text-xs font-medium text-zinc-500 hover:underline dark:text-zinc-400"
+          >
+            Open post
+            <Icon name="external" className="h-3 w-3" />
+          </a>
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -1153,9 +1332,9 @@ const ACTION_IDLE =
 const ACTION_DONE =
   "border-emerald-300 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-400";
 
-// One contact a lookup found, with where: the newest of the account's comments that has it, or else the newest of
-// its posts that has it (in the post or a comment on it), or else the About section; the other places are named.
-function ContactCard({
+// One contact a lookup found, as a row, with where: the newest of the account's comments that has it, or else the
+// newest of its posts that has it (in the post or a comment on it), or else the About section.
+function ContactRow({
   contact: t,
   sources,
   profile,
@@ -1188,21 +1367,46 @@ function ContactCard({
   // the text the contact is in, when there is no comment of the account to show
   const text = c ? null : hit ? hit.text : about ? sources.about : null;
   return (
-    <li className="px-4 py-3.5 transition-colors hover:bg-zinc-50/70 sm:px-5 dark:hover:bg-zinc-900/30">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span
-              className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${TYPE_BADGE[t.type] ?? "bg-zinc-100 dark:bg-zinc-800"}`}
+    <tr className="align-top transition-colors hover:bg-zinc-50/70 dark:hover:bg-zinc-900/30">
+      <td className="px-4 py-2.5 sm:px-5">
+        <span
+          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${TYPE_BADGE[t.type] ?? "bg-zinc-100 dark:bg-zinc-800"}`}
+        >
+          {TYPE_LABEL[t.type] ?? t.type}
+        </span>
+      </td>
+      <td className="px-4 py-2.5 sm:px-5">
+        <div className="flex items-start gap-1.5">
+          <span className="min-w-0 flex-1 font-mono text-sm break-all">{t.value}</span>
+          {href && (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open"
+              aria-label={`Open ${t.value}`}
+              className={`${ACTION_BTN} ${ACTION_IDLE}`}
             >
-              {TYPE_LABEL[t.type] ?? t.type}
-            </span>
-            <span className="min-w-0 font-mono text-sm break-all">{t.value}</span>
-          </div>
+              <Icon name="external" className="h-4 w-4" />
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={copy}
+            title={copied ? "Copied!" : "Copy"}
+            aria-label={`Copy ${t.value}`}
+            className={`${ACTION_BTN} ${copied ? ACTION_DONE : ACTION_IDLE}`}
+          >
+            <Icon name={copied ? "check" : "copy"} className={copied ? "animate-pop h-4 w-4" : "h-4 w-4"} />
+          </button>
+        </div>
+      </td>
+      <td className="px-4 py-2.5 sm:px-5">
+        <div className="min-w-0">
           {c && (
             <>
               {c.text && (
-                <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed break-words text-zinc-600 dark:text-zinc-400">
+                <p className="line-clamp-2 text-xs leading-relaxed break-words text-zinc-600 dark:text-zinc-400">
                   {c.text}
                 </p>
               )}
@@ -1229,7 +1433,7 @@ function ContactCard({
           {!c && (text || about || post) && (
             <>
               {text && (
-                <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed break-words text-zinc-600 dark:text-zinc-400">
+                <p className="line-clamp-2 text-xs leading-relaxed break-words text-zinc-600 dark:text-zinc-400">
                   {text}
                 </p>
               )}
@@ -1277,32 +1481,10 @@ function ContactCard({
               </div>
             </>
           )}
+          {!c && !text && !about && !post && <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {href && (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Open"
-              aria-label={`Open ${t.value}`}
-              className={`${ACTION_BTN} ${ACTION_IDLE}`}
-            >
-              <Icon name="external" className="h-4 w-4" />
-            </a>
-          )}
-          <button
-            type="button"
-            onClick={copy}
-            title={copied ? "Copied!" : "Copy"}
-            aria-label={`Copy ${t.value}`}
-            className={`${ACTION_BTN} ${copied ? ACTION_DONE : ACTION_IDLE}`}
-          >
-            <Icon name={copied ? "check" : "copy"} className={copied ? "animate-pop h-4 w-4" : "h-4 w-4"} />
-          </button>
-        </div>
-      </div>
-    </li>
+      </td>
+    </tr>
   );
 }
 
@@ -1397,79 +1579,3 @@ export function OutputLog({ runId, running }: { runId: string; running: boolean 
   );
 }
 
-function Lookups({
-  runs,
-  fresh,
-  viewId,
-  onShow,
-}: {
-  runs: Run[];
-  fresh: Run[];
-  viewId?: string;
-  onShow: (run: Run) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  if (runs.length === 0) return null;
-  return (
-    <section aria-labelledby="lookups-title">
-      <h2 id="lookups-title" className={`${EYEBROW} mb-3 flex items-center gap-1.5`}>
-        <Icon name="history" className="h-3.5 w-3.5" />
-        Earlier lookups
-        <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 tabular-nums dark:bg-zinc-800 dark:text-zinc-300">
-          {runs.length}
-        </span>
-      </h2>
-      <div className={`${CARD} overflow-hidden shadow-sm`}>
-        <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {runs.slice(0, expanded ? runs.length : LOOKUP_ROWS).map((listed) => {
-            // the list is only reloaded when a job starts or ends: take the running or open lookup's live copy
-            const run = fresh.find((f) => f.id === listed.id) ?? listed;
-            return (
-              <li key={run.id}>
-                <button
-                  type="button"
-                  onClick={() => onShow(run)}
-                  aria-current={run.id === viewId ? "true" : undefined}
-                  className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset ${
-                    run.id === viewId
-                      ? "bg-zinc-100 shadow-[inset_3px_0_0_var(--color-zinc-900)] dark:bg-zinc-800/70 dark:shadow-[inset_3px_0_0_var(--color-zinc-100)]"
-                      : "hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
-                  }`}
-                >
-                  <span
-                    aria-hidden="true"
-                    className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-zinc-100 text-xs font-semibold text-zinc-600 uppercase dark:bg-zinc-800 dark:text-zinc-300"
-                  >
-                    {(run.username ?? run.title ?? "?").trim().charAt(0) || "?"}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{run.username ?? run.title}</span>
-                    <span className="block text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-                      <LocalTime epoch={run.started_at} /> ·{" "}
-                      {run.contacts_only
-                        ? `${run.contacts_found ?? 0} contacts · ${run.comments_found ?? 0} comments${
-                            run.posts_found === undefined ? "" : ` · ${run.posts_found} posts`
-                          } read`
-                        : `${run.comments_found ?? 0} comments`}
-                    </span>
-                  </span>
-                  <StatusPill status={run.status} />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        {runs.length > LOOKUP_ROWS && (
-          <button
-            type="button"
-            onClick={() => setExpanded((e) => !e)}
-            aria-expanded={expanded}
-            className="w-full border-t border-zinc-200 px-4 py-2.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900/60"
-          >
-            {expanded ? "Show fewer" : `Show ${runs.length - LOOKUP_ROWS} more`}
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}

@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hrefFor } from "@/lib/contact-links";
 import type {
   AuthorEntry,
@@ -45,17 +46,73 @@ import {
   MAX_COMMENTS,
   OutputLog,
   RUN_ID_RE,
-  csvCell,
+  continuable,
+  continueErrorText,
   parseProfile,
   profileUrl,
   safeUrl,
-  saveCsv,
-  valueCell,
 } from "../comments-panel";
 import { authorsHref, authorsResult } from "./authors-result";
 
 const PAGE = 50; // authors rendered at a time
-const LOOKUP_ROWS = 6;
+
+// Which table columns are shown, chosen under Columns and kept in this browser; the CSV follows the same
+// choice. The Author column always stays. Modelled as an external store so hydration is consistent: the
+// server renders the default (every column on), and the browser switches to the saved choice right after.
+type Cols = { status: boolean; contacts: boolean; comments: boolean; about: boolean };
+const DEFAULT_COLS: Cols = { status: true, contacts: true, comments: true, about: true };
+const COLS_KEY = "authors-table-cols-v1";
+const COLUMN_OPTIONS: { key: keyof Cols; label: string }[] = [
+  { key: "status", label: "Status" },
+  { key: "contacts", label: "Contacts" },
+  { key: "comments", label: "Comments" },
+  { key: "about", label: "About" },
+];
+
+// whatever is stored is checked field by field; anything unexpected falls back to shown
+function readCols(): Cols {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(localStorage.getItem(COLS_KEY) ?? "null");
+  } catch {
+    return DEFAULT_COLS;
+  }
+  if (!raw || typeof raw !== "object") return DEFAULT_COLS;
+  const r = raw as Record<string, unknown>;
+  const bool = (v: unknown) => (typeof v === "boolean" ? v : true);
+  return { status: bool(r.status), contacts: bool(r.contacts), comments: bool(r.comments), about: bool(r.about) };
+}
+
+let colsCache: Cols | null = null;
+const colsListeners = new Set<() => void>();
+const getCols = () => (colsCache ??= readCols());
+const getServerCols = () => DEFAULT_COLS;
+
+function subscribeCols(cb: () => void) {
+  colsListeners.add(cb);
+  // changed in another tab (null: that tab cleared the storage)
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === COLS_KEY || e.key === null) {
+      colsCache = readCols();
+      cb();
+    }
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    colsListeners.delete(cb);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+function saveCols(next: Cols) {
+  colsCache = next;
+  try {
+    localStorage.setItem(COLS_KEY, JSON.stringify(next));
+  } catch {
+    // still applies to this page view, it just isn't remembered
+  }
+  colsListeners.forEach((l) => l());
+}
 
 // the counts in the result file are the real ones; the run's own counts can lag behind them
 const withCount = (run: Run, result: AuthorsResult | null): Run =>
@@ -97,59 +154,78 @@ const STATUS_TEXT: Record<AuthorEntry["status"], string> = {
 const CONTACT_INFO_TEXT: Record<string, string> = { read: "Read", none: "Not shown", failed: "Didn't load" };
 const CSV_TYPES = ["email", "phone", "whatsapp", "telegram", "linkedin"] as const;
 
-// a cell with all of an author's contacts of one type; ="..." keeps Excel from turning a phone number into 9.18E+11
-// (Excel cuts formula text at 255 characters, so a longer cell is plain text)
-const contactsCell = (values: string[]) => {
-  const v = values.join("; ");
-  return v.length < 240 ? valueCell(v) : csvCell(v);
-};
-
 // a comment's links (a file from a short-lived version of the script kept the whole comment)
 const asLink = (c: UserComment | AuthorLink): AuthorLink =>
   "post" in c ? { id: c.id, post_url: c.post.url, comment_url: c.url, date: c.date } : c;
 const postLink = (c: UserComment | AuthorLink) => asLink(c).post_url;
 const commentLink = (c: UserComment | AuthorLink) => asLink(c).comment_url;
 
-// One row per author: all of their contacts in it (a column per type), and the links to the account's comments
-// on their posts and to those posts
-function downloadCsv(result: AuthorsResult, rows: AuthorEntry[]) {
+// One row per author as an Excel sheet, with the columns the table shows: the Author column's identity cells
+// always, then per chosen column its cells. An .xlsx, not a CSV, so the file opens cleanly: every column as
+// wide as its content, every row one line (several links sit in one cell, separated by commas), the header
+// bold and frozen, and numbers kept as text (no 9.18E+11). exceljs is loaded only when the button is pressed.
+async function downloadXlsx(result: AuthorsResult, rows: AuthorEntry[], cols: Cols) {
+  const { Workbook } = await import("exceljs");
   const head = [
     "Author",
     "Profile",
     "Account type",
     "Posts commented on",
-    "Status",
-    "Contact info",
-    "Email",
-    "Phone",
-    "WhatsApp",
-    "Telegram",
-    "LinkedIn",
-    "Contacts from post",
-    "Comment links",
-    "Post links",
-    "About",
+    ...(cols.status ? ["Status", "Contact info"] : []),
+    ...(cols.contacts ? ["Email", "Phone", "WhatsApp", "Telegram", "LinkedIn", "Contacts from post"] : []),
+    ...(cols.comments ? ["Comment links", "Post links"] : []),
+    ...(cols.about ? ["About"] : []),
   ];
   const lines = rows.map((a) => {
     const comments = a.comments ?? [];
     const posts = [...new Set((comments.length ? comments.map(postLink) : [a.post_url]).filter(Boolean))];
     return [
-      ...[
-        a.name,
-        a.profile,
-        a.kind === "person" ? "Person" : "Company page",
-        String(a.posts),
-        STATUS_TEXT[a.status],
-        CONTACT_INFO_TEXT[a.contact_info ?? ""] ?? "",
-      ].map(csvCell),
-      ...CSV_TYPES.map((type) => contactsCell(a.contacts.filter((t) => t.type === type).map((t) => t.value))),
-      csvCell(a.contact_post ?? ""),
-      csvCell(comments.map(commentLink).filter(Boolean).join("\n")),
-      csvCell(posts.join("\n")),
-      csvCell(a.about),
-    ].join(",");
+      a.name,
+      a.profile,
+      a.kind === "person" ? "Person" : "Company page",
+      String(a.posts),
+      ...(cols.status ? [STATUS_TEXT[a.status], CONTACT_INFO_TEXT[a.contact_info ?? ""] ?? ""] : []),
+      ...(cols.contacts
+        ? [
+            ...CSV_TYPES.map((type) =>
+              a.contacts
+                .filter((t) => t.type === type)
+                .map((t) => t.value)
+                .join("; "),
+            ),
+            a.contact_post ?? "",
+          ]
+        : []),
+      ...(cols.comments
+        ? [comments.map(commentLink).filter(Boolean).join(", "), posts.join(", ")]
+        : []),
+      ...(cols.about ? [(a.about ?? "").replace(/\s*\n\s*/g, " ")] : []),
+    ];
   });
-  saveCsv(head, lines, `authors_${result.username}.csv`);
+
+  const workbook = new Workbook();
+  const sheet = workbook.addWorksheet("Authors", { views: [{ state: "frozen", ySplit: 1 }] });
+  sheet.addRow(head);
+  lines.forEach((line) => sheet.addRow(line));
+  head.forEach((title, i) => {
+    const column = sheet.getColumn(i + 1);
+    const longest = Math.max(title.length, ...lines.map((line) => line[i].length));
+    column.width = Math.min(Math.max(longest + 2, 10), 100);
+    column.alignment = { vertical: "top", wrapText: false };
+  });
+  sheet.getRow(1).font = { bold: true };
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: head.length } };
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `authors_${result.username}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 type View = { id: string; run: Run | null; result: AuthorsResult | null; loaded: boolean; gone: boolean };
@@ -178,7 +254,7 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
     return { id, run: known.find((r) => r?.id === id) ?? null, result: null, loaded: false, gone: false };
   });
   const [message, setMessage] = useState<string | null>(null);
-  const [pending, setPending] = useState<"start" | "stop" | null>(null);
+  const [pending, setPending] = useState<"start" | "stop" | "continue" | null>(null);
 
   const busy = status?.busy ?? false;
   const busyRef = useRef(busy);
@@ -377,11 +453,31 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
     }
   }
 
+  // a lookup that stopped part-way goes on from where it stopped: a new run that starts with what it found
+  async function goOn(id: string) {
+    setPending("continue");
+    setMessage(null);
+    try {
+      const run = await post<Run>(`authors/${id}/resume`);
+      busyRef.current = true;
+      followedRef.current = run.id;
+      setStatus((s) => ({ busy: true, current: run, last: s?.last ?? null }));
+      open(run);
+      pollSoonRef.current();
+    } catch (e) {
+      setMessage(continueErrorText(e));
+    } finally {
+      setPending(null);
+    }
+  }
+
   const current = status?.current ?? null;
   const offline = configured && link !== "online";
   const blocked = busy || offline || pending !== null;
   const shown = view?.run ? withCount(view.run, view.result) : null;
   const fresh = [current, shown].filter((r): r is Run => r !== null);
+  const elsewhere =
+    current?.kind === "authors" && current.status === "running" && current.id !== view?.id ? current : null;
 
   const live = shown
     ? `${shown.username ?? "Lookup"}: ${
@@ -436,59 +532,75 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
             token is <Code>API_TOKEN</Code> from <Code>linkedin-2/.env</Code>), then restart this app.
           </Notice>
         ) : (
-          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:grid-rows-[auto_1fr] lg:gap-7">
-            <div className="min-w-0 space-y-6">
-              {link === "offline" && (
-                <Notice title="Can't reach the scraper API">
-                  Start it in the <Code>linkedin-2</Code> folder with <Code>python api.py</Code> (on a server:{" "}
-                  <Code>sudo systemctl restart linkedin-api</Code>). This page keeps retrying on its own.
-                </Notice>
+          <div className="space-y-6">
+            {link === "offline" && (
+              <Notice title="Can't reach the scraper API">
+                Start it in the <Code>linkedin-2</Code> folder with <Code>python api.py</Code> (on a server:{" "}
+                <Code>sudo systemctl restart linkedin-api</Code>). This page keeps retrying on its own.
+              </Notice>
+            )}
+            {link === "token" && (
+              <Notice title="The API token doesn't match">
+                The API is running but rejects this app&apos;s token. <Code>SCRAPER_API_TOKEN</Code> in{" "}
+                <Code>linkedin-data/.env</Code> must equal <Code>API_TOKEN</Code> in <Code>linkedin-2/.env</Code>.
+                Restart both apps after changing it.
+              </Notice>
+            )}
+
+            {/* the form and the lookup's summary in one full-width card */}
+            <div className={`${CARD} overflow-hidden shadow-sm`}>
+              {view?.run?.status === "running" && (
+                <div className="h-0.5 w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800" aria-hidden="true">
+                  <div className="h-full w-1/3 rounded-full bg-zinc-500 animate-slide-x dark:bg-zinc-400" />
+                </div>
               )}
-              {link === "token" && (
-                <Notice title="The API token doesn't match">
-                  The API is running but rejects this app&apos;s token. <Code>SCRAPER_API_TOKEN</Code> in{" "}
-                  <Code>linkedin-data/.env</Code> must equal <Code>API_TOKEN</Code> in <Code>linkedin-2/.env</Code>.
-                  Restart both apps after changing it.
-                </Notice>
+              {elsewhere && (
+                <button
+                  type="button"
+                  onClick={() => open(elsewhere)}
+                  className="flex w-full items-center gap-2 border-b border-sky-200 bg-sky-50 px-4 py-2 text-left text-xs font-medium text-sky-800 transition-colors hover:bg-sky-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-inset dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-950"
+                >
+                  <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-500" />
+                  <span className="flex-1">A lookup for {elsewhere.username ?? "another account"} is running</span>
+                  <span className="underline underline-offset-2">Show it</span>
+                </button>
               )}
-              <LookupForm
-                blocked={blocked}
-                blockedReason={
-                  link === "token"
-                    ? "The scraper API rejects this app's token (see above)."
-                    : offline
-                      ? "The scraper API isn't reachable right now."
-                      : !busy
-                        ? null
-                        : current?.kind !== "authors"
-                          ? "Another job is running (a scraper run or a User comments lookup). Wait for it to finish, or stop it first."
-                          : current.id === view?.id
-                            ? "A lookup is running. Wait for it to finish, or press Stop."
-                            : "Another lookup is running. Wait for it to finish, or open it and press Stop."
-                }
-                starting={pending === "start"}
-                onStart={start}
-              />
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+                <LookupForm
+                  blocked={blocked}
+                  blockedReason={
+                    link === "token"
+                      ? "The scraper API rejects this app's token (see above)."
+                      : offline
+                        ? "The scraper API isn't reachable right now."
+                        : !busy
+                          ? null
+                          : current?.kind !== "authors"
+                            ? "Another job is running (a scraper run or a User comments lookup). Wait for it to finish, or stop it first."
+                            : current.id === view?.id
+                              ? "A lookup is running. Wait for it to finish, or press Stop."
+                              : "Another lookup is running. Wait for it to finish, or open it and press Stop."
+                  }
+                  starting={pending === "start"}
+                  onStart={start}
+                />
+                <Summary
+                  view={view}
+                  link={link}
+                  current={current}
+                  stopping={pending === "stop"}
+                  onStop={stop}
+                  blocked={blocked}
+                  continuing={pending === "continue"}
+                  onContinue={goOn}
+                />
+              </div>
             </div>
 
-            <section
-              ref={resultsRef}
-              aria-label="Authors"
-              className="min-w-0 scroll-mt-32 sm:scroll-mt-20 lg:col-start-2 lg:row-span-2 lg:row-start-1"
-            >
-              <Results
-                view={view}
-                link={link}
-                current={current}
-                stopping={pending === "stop"}
-                onStop={stop}
-                onShow={open}
-              />
+            {/* the authors as a table; the scraper output (the logs) sits at its bottom */}
+            <section ref={resultsRef} aria-label="Authors" className="min-w-0 scroll-mt-32 sm:scroll-mt-20">
+              <AuthorsTable view={view} lookups={lookups} fresh={fresh} onShow={open} />
             </section>
-
-            <div className="min-w-0">
-              <Lookups runs={lookups} fresh={fresh} viewId={view?.id} onShow={open} />
-            </div>
           </div>
         )}
       </div>
@@ -522,7 +634,11 @@ function LookupForm({
   }
 
   return (
-    <form onSubmit={submit} className={`${CARD} shadow-sm`} aria-labelledby="authors-title">
+    <form
+      onSubmit={submit}
+      className="flex min-w-0 flex-col border-b border-zinc-200 lg:border-r lg:border-b-0 dark:border-zinc-800"
+      aria-labelledby="authors-title"
+    >
       <div className="flex items-center gap-3 border-b border-zinc-200 bg-gradient-to-r from-zinc-50 to-transparent px-4 py-4 sm:px-5 dark:border-zinc-800 dark:from-zinc-900/60">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-600 text-white shadow-md shadow-zinc-900/20 dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900">
           <Icon name="users" />
@@ -538,7 +654,7 @@ function LookupForm({
         </div>
       </div>
 
-      <div className="space-y-4 px-4 py-4 sm:px-5">
+      <div className="flex flex-1 flex-col gap-4 px-4 py-4 sm:px-5">
         <div>
           <label htmlFor="authors-profile" className="text-sm font-medium">
             LinkedIn username or profile URL
@@ -624,15 +740,8 @@ function LookupForm({
           )}
         </div>
 
-        <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-400">
-          Every author&apos;s profile is opened once, with its About section and Contact info (about 15–30 seconds
-          each); they may see the visit under &quot;Who viewed your profile&quot;. Contact info mostly shows an email
-          or phone number only to the person&apos;s own connections. When neither has contact details, up to 5 of the
-          author&apos;s newest posts are opened one by one, until one has an email, phone number, WhatsApp or Telegram
-          in its text. Company pages are listed but not opened. Contacts are also added to the contacts table.
-        </p>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+        <div className="mt-auto flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
           {blockedReason && <p className="text-xs text-zinc-500 sm:mr-auto dark:text-zinc-400">{blockedReason}</p>}
           <button
             type="submit"
@@ -650,42 +759,34 @@ function LookupForm({
 
 const TILE = "rounded-xl border border-zinc-200 bg-white px-3 py-2.5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60";
 
-function Results({
+// The lookup's header: who it is about, its stat tiles and its outcome. The right half of the top card.
+function Summary({
   view,
   link,
   current,
   stopping,
   onStop,
-  onShow,
+  blocked,
+  continuing,
+  onContinue,
 }: {
   view: View | null;
   link: ApiLink;
   current: Run | null;
   stopping: boolean;
   onStop: (id: string) => void;
-  onShow: (run: Run) => void;
+  blocked: boolean;
+  continuing: boolean;
+  onContinue: (id: string) => void;
 }) {
   const run = view?.run ?? null;
   const running = run?.status === "running";
   const now = useNow(running);
   const result = view?.result ?? null;
-  const [query, setQuery] = useState("");
-  const [page, setPage] = useState({ key: "", n: PAGE });
-
-  const authors = useMemo(() => result?.authors ?? [], [result]);
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return authors;
-    return authors.filter((a) =>
-      [a.name, a.profile, a.about, ...a.contacts.map((t) => t.value)].some((s) => s?.toLowerCase().includes(q)),
-    );
-  }, [authors, query]);
-  const pageKey = `${view?.id}|${query}`;
-  const shownN = page.key === pageKey ? page.n : PAGE;
 
   if (!view) {
     return (
-      <div className={`${CARD} flex flex-col items-center px-6 py-14 text-center shadow-sm`}>
+      <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
         <div className="grid h-12 w-12 place-items-center rounded-full bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
           <Icon name="users" className="h-5 w-5" />
         </div>
@@ -711,28 +812,9 @@ function Results({
   const elapsed = lookup ? (running ? now / 1000 : (lookup.ended_at ?? lookup.started_at)) - lookup.started_at : null;
   const isCurrent = current?.id === view.id;
   const toRead = result?.profiles_total ?? null;
-  const withContacts = authors.filter((a) => a.contacts.length).length;
-  const elsewhere = current?.kind === "authors" && current.status === "running" && !isCurrent ? current : null;
 
   return (
-    <div className={`${CARD} overflow-hidden shadow-sm`}>
-      {running && (
-        <div className="h-0.5 w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800" aria-hidden="true">
-          <div className="h-full w-1/3 rounded-full bg-zinc-500 animate-slide-x dark:bg-zinc-400" />
-        </div>
-      )}
-      {elsewhere && (
-        <button
-          type="button"
-          onClick={() => onShow(elsewhere)}
-          className="flex w-full items-center gap-2 border-b border-sky-200 bg-sky-50 px-4 py-2 text-left text-xs font-medium text-sky-800 transition-colors hover:bg-sky-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-inset dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-950"
-        >
-          <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-500" />
-          <span className="flex-1">A lookup for {elsewhere.username ?? "another account"} is running</span>
-          <span className="underline underline-offset-2">Show it</span>
-        </button>
-      )}
-      <div className="space-y-4 bg-gradient-to-b from-zinc-50/90 to-transparent p-4 sm:p-5 dark:from-zinc-900/50">
+    <div className="min-w-0 space-y-4 bg-gradient-to-b from-zinc-50/90 to-transparent p-4 sm:p-5 dark:from-zinc-900/50">
         <div className="flex items-start justify-between gap-3">
           <div
             aria-hidden="true"
@@ -761,7 +843,7 @@ function Results({
         </div>
 
         {lookup && counted && (
-          <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+          <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-6">
             <div className={TILE}>
               <dt className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                 <Icon name="users" className="h-3 w-3" />
@@ -844,59 +926,242 @@ function Results({
             {stopping ? "Stopping..." : "Stop"}
           </button>
         )}
+
+        {lookup && continuable(lookup, result?.complete) && (
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => onContinue(view.id)}
+              disabled={blocked}
+              className={`${PRIMARY} w-full`}
+            >
+              <Icon name="play" />
+              {continuing ? "Continuing..." : "Continue from here"}
+            </button>
+            <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              A new run keeps the comments read and the authors opened so far, and goes on from where this lookup
+              stopped, not from the beginning.
+            </p>
+          </div>
+        )}
+    </div>
+  );
+}
+
+// the sticky header cell of the authors table
+const TH =
+  "sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 text-left font-medium whitespace-nowrap sm:px-5 dark:border-zinc-800 dark:bg-zinc-900";
+
+// The authors as a compact table in a fixed frame: the rows scroll inside it, not the page. The toolbar holds
+// the earlier-lookups picker, the search and the CSV download; the scraper output (the logs) closes the card.
+function AuthorsTable({
+  view,
+  lookups,
+  fresh,
+  onShow,
+}: {
+  view: View | null;
+  lookups: Run[];
+  fresh: Run[];
+  onShow: (run: Run) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState({ key: "", n: PAGE });
+  const cols = useSyncExternalStore(subscribeCols, getCols, getServerCols);
+  const [colsOpen, setColsOpen] = useState(false);
+  const run = view?.run ?? null;
+  const lookup = run?.kind === "authors" ? run : null;
+  const running = run?.status === "running";
+  const result = view?.result ?? null;
+  const username = lookup?.username ?? result?.username ?? "";
+  const customized = COLUMN_OPTIONS.some((c) => !cols[c.key]);
+  // the frame scrolls sideways below the room the chosen columns need
+  const tableMinWidth = `${15 + (cols.status ? 8 : 0) + (cols.contacts ? 22 : 0) + (cols.comments ? 16 : 0) + (cols.about ? 18 : 0)}rem`;
+
+  const authors = useMemo(() => result?.authors ?? [], [result]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return authors;
+    return authors.filter((a) =>
+      [a.name, a.profile, a.about, ...a.contacts.map((t) => t.value)].some((s) => s?.toLowerCase().includes(q)),
+    );
+  }, [authors, query]);
+  const withContacts = authors.filter((a) => a.contacts.length).length;
+  const pageKey = `${view?.id}|${query}`;
+  const shownN = page.key === pageKey ? page.n : PAGE;
+
+  // the picker's rows: the earlier lookups (with live counts), plus the one on screen if it isn't listed yet
+  const options = useMemo(() => {
+    const merged = lookups.map((listed) => fresh.find((f) => f.id === listed.id) ?? listed);
+    const shown = view?.run;
+    if (shown && shown.kind === "authors" && !merged.some((r) => r.id === shown.id)) merged.unshift(shown);
+    return merged;
+  }, [lookups, fresh, view]);
+
+  return (
+    <div className={`${CARD} overflow-hidden shadow-sm`}>
+      <div className="flex flex-col gap-2 border-b border-zinc-200 bg-zinc-50/60 px-4 py-3 sm:px-5 lg:flex-row lg:items-center dark:border-zinc-800 dark:bg-zinc-900/30">
+        {options.length > 0 && (
+          <Select
+            value={view?.id ?? ""}
+            onValueChange={(id) => {
+              const picked = options.find((r) => r.id === id);
+              if (picked) onShow(picked);
+            }}
+          >
+            <SelectTrigger aria-label="Earlier lookups" title="Earlier lookups" className="w-full shrink-0 lg:w-80">
+              <SelectValue placeholder="Earlier lookups" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  <span className="font-medium">{r.username ?? r.title}</span>
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    {" "}
+                    · <LocalTime epoch={r.started_at} /> · {r.contacts_found ?? 0} contacts ·{" "}
+                    {r.status === "running" ? STATUS.running.label : STATUS[r.status].label}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <label className="relative min-w-0 flex-1">
+          <span className="sr-only">Search these authors</span>
+          <Icon name="search" className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search authors, contacts and About text"
+            className="block w-full rounded-lg border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-hidden focus:ring-2 focus:ring-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-zinc-700"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => setColsOpen((o) => !o)}
+          aria-expanded={colsOpen}
+          aria-controls="authors-columns"
+          className={SECONDARY}
+        >
+          <Icon name="sliders" />
+          Columns
+          {customized && (
+            <>
+              {/* a div, not a span: span.rounded-full is reserved for badges/status pills (the tests rely on it) */}
+              <div className="h-1.5 w-1.5 rounded-full bg-sky-500" aria-hidden="true" />
+              <span className="sr-only">(changed from the default)</span>
+            </>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => result && downloadXlsx(result, filtered, cols)}
+          disabled={!result || filtered.length === 0}
+          title="Download as Excel (.xlsx)"
+          className={SECONDARY}
+        >
+          <Icon name="download" />
+          {query.trim() ? `Excel (${filtered.length})` : "Excel"}
+        </button>
       </div>
 
-      {authors.length > 0 && result && (
-        <div className="flex flex-col gap-2 border-t border-zinc-200 bg-zinc-50/60 px-4 py-3 sm:flex-row sm:items-center sm:px-5 dark:border-zinc-800 dark:bg-zinc-900/30">
-          <label className="relative min-w-0 flex-1">
-            <span className="sr-only">Search these authors</span>
-            <Icon name="search" className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search authors, contacts and About text"
-              className="block w-full rounded-lg border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-hidden focus:ring-2 focus:ring-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-zinc-700"
-            />
-          </label>
-          <button type="button" onClick={() => downloadCsv(result, filtered)} className={SECONDARY}>
-            <Icon name="download" />
-            {query.trim() ? `CSV (${filtered.length})` : "CSV"}
-          </button>
+      {colsOpen && (
+        <div
+          id="authors-columns"
+          className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-2.5 sm:px-5 dark:border-zinc-800"
+        >
+          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">Show columns:</span>
+          {COLUMN_OPTIONS.map((col) => (
+            <label
+              key={col.key}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium transition-colors hover:border-zinc-400 has-checked:border-zinc-900 has-checked:bg-zinc-50 has-focus-visible:ring-2 has-focus-visible:ring-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500 dark:has-checked:border-zinc-100 dark:has-checked:bg-zinc-900"
+            >
+              <input
+                type="checkbox"
+                checked={cols[col.key]}
+                onChange={(e) => saveCols({ ...getCols(), [col.key]: e.target.checked })}
+                className="h-3.5 w-3.5 accent-zinc-900 outline-hidden dark:accent-zinc-100"
+              />
+              {col.label}
+            </label>
+          ))}
+          <span className="ml-auto flex items-center gap-3">
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              Saved in this browser · the CSV gets these columns too
+            </span>
+            <button
+              type="button"
+              onClick={() => saveCols(DEFAULT_COLS)}
+              disabled={!customized}
+              className="flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium transition-all hover:border-zinc-400 active:scale-95 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-700 dark:hover:border-zinc-500"
+            >
+              <Icon name="reset" className="h-3.5 w-3.5" />
+              Reset
+            </button>
+          </span>
         </div>
       )}
 
-      {authors.length > 0 && (
+      {!view ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">
+          The authors show up here as a table once a lookup runs.
+        </p>
+      ) : !view.loaded ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">Loading...</p>
+      ) : view.gone ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">
+          This lookup is no longer on the scraper API.
+        </p>
+      ) : authors.length === 0 ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">
+          {running ? "Reading the comments... the authors show up here as they are found." : "No authors in this lookup."}
+        </p>
+      ) : filtered.length === 0 ? (
+        <p className="px-4 py-10 text-center text-sm text-zinc-500 sm:px-5 dark:text-zinc-400">
+          No authors match this search.
+        </p>
+      ) : (
         <>
-          <p className="border-t border-zinc-200 px-4 py-2 text-xs text-zinc-500 sm:px-5 dark:border-zinc-800 dark:text-zinc-400">
+          <p className="border-b border-zinc-200 px-4 py-2 text-xs text-zinc-500 sm:px-5 dark:border-zinc-800 dark:text-zinc-400">
             {query.trim()
               ? `${filtered.length} of ${authors.length} authors match.`
               : `${authors.length} ${authors.length === 1 ? "author" : "authors"}, ${withContacts} with contacts.`}
           </p>
-          <ul className="divide-y divide-zinc-200 border-t border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-            {filtered.slice(0, shownN).map((a) => (
-              <AuthorCard key={a.profile} author={a} by={username} />
-            ))}
-          </ul>
-          {filtered.length > shownN && (
-            <button
-              type="button"
-              onClick={() => setPage({ key: pageKey, n: shownN + PAGE })}
-              className="w-full border-t border-zinc-200 px-4 py-3 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900/60"
-            >
-              Show {Math.min(PAGE, filtered.length - shownN)} more ({filtered.length - shownN} left)
-            </button>
-          )}
+          {/* the fixed frame: the table scrolls in here, sideways too when it needs more room */}
+          <div className="max-h-[62dvh] overflow-auto overscroll-contain">
+            <table className="w-full table-fixed text-sm" style={{ minWidth: tableMinWidth }}>
+              <thead className="text-xs tracking-wide text-zinc-500 uppercase dark:text-zinc-400">
+                <tr>
+                  <th className={`${TH} ${cols.contacts ? "w-60" : ""}`}>Author</th>
+                  {cols.status && <th className={`${TH} w-32`}>Status</th>}
+                  {cols.contacts && <th className={TH}>Contacts</th>}
+                  {cols.comments && (
+                    <th className={`${TH} w-64`}>{username ? `Comments by ${username}` : "Comments"}</th>
+                  )}
+                  {cols.about && <th className={`${TH} ${cols.contacts ? "w-72" : ""}`}>About</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                {filtered.slice(0, shownN).map((a) => (
+                  <AuthorRow key={a.profile} author={a} cols={cols} />
+                ))}
+              </tbody>
+            </table>
+            {filtered.length > shownN && (
+              <button
+                type="button"
+                onClick={() => setPage({ key: pageKey, n: shownN + PAGE })}
+                className="w-full border-t border-zinc-200 px-4 py-3 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900/60"
+              >
+                Show {Math.min(PAGE, filtered.length - shownN)} more ({filtered.length - shownN} left)
+              </button>
+            )}
+          </div>
         </>
       )}
 
-      {!view.loaded && (
-        <p className="border-t border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500 sm:px-5 dark:border-zinc-800 dark:text-zinc-400">
-          Loading...
-        </p>
-      )}
-
-      {lookup && <OutputLog key={lookup.id} runId={lookup.id} running={running} />}
+      {lookup && <OutputLog key={lookup.id} runId={lookup.id} running={running ?? false} />}
     </div>
   );
 }
@@ -936,9 +1201,10 @@ function noContactsText(a: AuthorEntry) {
   return `No contact details in ${places.length ? `${places.join(", ")} or ${last}` : last}.`;
 }
 
-// `by`: the looked-up account, whose comments on this author's posts are shown
-function AuthorCard({ author: a, by }: { author: AuthorEntry; by: string }) {
-  const [open, setOpen] = useState(false);
+// One author per row. Every cell keeps the data clickable the way the cards had it: the profile, each
+// contact's Open and Copy, and the links to the comments and posts. `cols`: the columns to render.
+function AuthorRow({ author: a, cols }: { author: AuthorEntry; cols: Cols }) {
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [allComments, setAllComments] = useState(false);
   const profile = safeUrl(a.profile);
   const initial = (a.name || a.profile.replace(/\/+$/, "").split("/").pop() || "?").trim().charAt(0);
@@ -948,7 +1214,7 @@ function AuthorCard({ author: a, by }: { author: AuthorEntry; by: string }) {
     : a.post_url
       ? [{ id: "post", post_url: a.post_url, comment_url: null, date: null }]
       : [];
-  const shownComments = allComments ? comments : comments.slice(0, 3);
+  const shownComments = allComments ? comments : comments.slice(0, 2);
   const fromAbout = a.contacts.filter((t) => !t.found_in || t.found_in.includes("about")).length;
   const fromInfo = a.contacts.filter((t) => t.found_in?.includes("contact_info")).length;
   const fromPost = a.contacts.filter((t) => t.found_in?.includes("post")).length;
@@ -963,145 +1229,170 @@ function AuthorCard({ author: a, by }: { author: AuthorEntry; by: string }) {
         ? "No posts of theirs were found."
         : null,
   ].filter(Boolean);
+
   return (
-    <li className="px-4 py-4 transition-colors hover:bg-zinc-50/70 sm:px-5 dark:hover:bg-zinc-900/30">
-      <div className="flex items-start gap-3">
-        <div
-          aria-hidden="true"
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-zinc-100 text-sm font-semibold text-zinc-600 uppercase dark:bg-zinc-800 dark:text-zinc-300"
-        >
-          {initial}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    <tr className="align-top transition-colors hover:bg-zinc-50/70 dark:hover:bg-zinc-900/30">
+      <td className="px-4 py-2.5 sm:px-5">
+        <div className="flex items-start gap-2.5">
+          <div
+            aria-hidden="true"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-zinc-100 text-xs font-semibold text-zinc-600 uppercase dark:bg-zinc-800 dark:text-zinc-300"
+          >
+            {initial}
+          </div>
+          <div className="min-w-0">
             {profile ? (
-              <a href={profile} target="_blank" rel="noreferrer" className="truncate text-sm font-semibold hover:underline">
+              <a
+                href={profile}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate text-sm font-semibold hover:underline"
+                title={a.name || profile}
+              >
                 {a.name || profile.replace(/^https:\/\/www\./, "")}
               </a>
             ) : (
-              <span className="truncate text-sm font-semibold">{a.name || "Unknown author"}</span>
+              <span className="block truncate text-sm font-semibold">{a.name || "Unknown author"}</span>
             )}
-            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${AUTHOR_STATUS[a.status]}`}>
-              {STATUS_TEXT[a.status]}
-            </span>
-          </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
-            <span>{a.posts === 1 ? "1 post commented on" : `${a.posts} posts commented on`}</span>
-            {a.status === "failed" && a.note && <span className="min-w-0 truncate">· {a.note}</span>}
-          </div>
-
-          {/* every contact of this author together, from the About section and Contact info, or else one of their
-              posts */}
-          {a.contacts.length > 0 && (
-            <div className="mt-2.5 rounded-xl border border-zinc-200 bg-white p-2.5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900/60">
-              <div className="flex flex-wrap gap-1.5">
-                {a.contacts.map((t) => (
-                  <ContactChip key={`${t.type}:${t.value}`} type={t.type} value={t.value} foundIn={t.found_in} />
-                ))}
+            <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              {a.posts === 1 ? "1 post commented on" : `${a.posts} posts commented on`}
+            </div>
+            {a.status === "failed" && a.note && (
+              <div className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400" title={a.note}>
+                {a.note}
               </div>
-              <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-                Found in{" "}
-                {[
-                  fromAbout ? `About (${fromAbout})` : null,
-                  fromInfo ? `Contact info (${fromInfo})` : null,
-                  fromPost ? `their post (${fromPost})` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-                {fromPost > 0 && contactPost && (
-                  <>
-                    {" · "}
-                    <a
-                      href={contactPost}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-0.5 font-medium text-zinc-700 hover:underline dark:text-zinc-300"
-                    >
-                      Open that post
-                      <Icon name="external" className="h-3 w-3" />
-                    </a>
-                  </>
-                )}
-              </p>
-            </div>
-          )}
-          {notes.length > 0 && <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">{notes.join(" ")}</p>}
-
-          {/* where the looked-up account commented on this author's posts: Open comment and Open post, as on
-              the User comments tab */}
-          {comments.length > 0 && (
-            <div className="mt-3">
-              <div className="text-[11px] font-semibold tracking-wide text-zinc-500 uppercase dark:text-zinc-400">
-                {by ? `Comments by ${by}` : "Comments"} ({comments.length})
-              </div>
-              <ul className="mt-1.5 divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950">
-                {shownComments.map((c) => (
-                  <LinkRow key={c.id} link={asLink(c)} />
-                ))}
-              </ul>
-              {comments.length > 3 && (
-                <button
-                  type="button"
-                  onClick={() => setAllComments((x) => !x)}
-                  aria-expanded={allComments}
-                  className="mt-1.5 text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
-                >
-                  {allComments ? "Show fewer" : `Show all ${comments.length} comments`}
-                </button>
-              )}
-            </div>
-          )}
-
-          {a.about && (
-            <div className="mt-2.5">
-              <p
-                className={`text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-600 dark:text-zinc-400 ${
-                  open ? "" : "line-clamp-2"
-                }`}
-              >
-                {a.about}
-              </p>
-              {a.about.length > 160 && (
-                <button
-                  type="button"
-                  onClick={() => setOpen((o) => !o)}
-                  aria-expanded={open}
-                  className="mt-0.5 text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
-                >
-                  {open ? "Show less" : "Show the whole About"}
-                </button>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
-    </li>
+      </td>
+      {cols.status && (
+        <td className="px-4 py-2.5 sm:px-5">
+          <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${AUTHOR_STATUS[a.status]}`}>
+            {STATUS_TEXT[a.status]}
+          </span>
+          {a.contact_info && CONTACT_INFO_TEXT[a.contact_info] && (
+            <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              Contact info: {CONTACT_INFO_TEXT[a.contact_info]}
+            </div>
+          )}
+        </td>
+      )}
+      {cols.contacts && (
+        <td className="px-4 py-2.5 sm:px-5">
+          {a.contacts.length > 0 ? (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {a.contacts.map((t) => (
+                <ContactChip key={`${t.type}:${t.value}`} type={t.type} value={t.value} foundIn={t.found_in} />
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+              Found in{" "}
+              {[
+                fromAbout ? `About (${fromAbout})` : null,
+                fromInfo ? `Contact info (${fromInfo})` : null,
+                fromPost ? `their post (${fromPost})` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              {fromPost > 0 && contactPost && (
+                <>
+                  {" · "}
+                  <a
+                    href={contactPost}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-0.5 font-medium text-zinc-700 hover:underline dark:text-zinc-300"
+                  >
+                    Open that post
+                    <Icon name="external" className="h-3 w-3" />
+                  </a>
+                </>
+              )}
+            </p>
+          </>
+        ) : (
+          <span className="text-xs text-zinc-400 dark:text-zinc-600">No contacts.</span>
+        )}
+          {notes.length > 0 && <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{notes.join(" ")}</p>}
+        </td>
+      )}
+      {cols.comments && (
+        <td className="px-4 py-2.5 sm:px-5">
+          {comments.length > 0 ? (
+          <>
+            <ul>
+              {shownComments.map((c) => (
+                <CommentLine key={c.id} link={asLink(c)} />
+              ))}
+            </ul>
+            {comments.length > 2 && (
+              <button
+                type="button"
+                onClick={() => setAllComments((x) => !x)}
+                aria-expanded={allComments}
+                className="mt-0.5 text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
+              >
+                {allComments ? "Show fewer" : `Show all ${comments.length}`}
+              </button>
+            )}
+          </>
+          ) : (
+            <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+          )}
+        </td>
+      )}
+      {cols.about && (
+        <td className="px-4 py-2.5 sm:px-5">
+          {a.about ? (
+          <>
+            <p
+              className={`text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-600 dark:text-zinc-400 ${
+                aboutOpen ? "" : "line-clamp-3"
+              }`}
+            >
+              {a.about}
+            </p>
+            {a.about.length > 140 && (
+              <button
+                type="button"
+                onClick={() => setAboutOpen((o) => !o)}
+                aria-expanded={aboutOpen}
+                className="mt-0.5 text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
+              >
+                {aboutOpen ? "Show less" : "Show the whole About"}
+              </button>
+            )}
+          </>
+          ) : (
+            <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+          )}
+        </td>
+      )}
+    </tr>
   );
 }
 
-// one of the account's comments: when, and the links Open comment and Open post (as User comments has them)
-function LinkRow({ link: c }: { link: AuthorLink }) {
+// one of the account's comments: when, and the links to the comment and its post
+function CommentLine({ link: c }: { link: AuthorLink }) {
   const postUrl = safeUrl(c.post_url);
   const commentUrl = safeUrl(c.comment_url);
   const day = shortDate(c.date);
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-xs text-zinc-500 sm:px-5 dark:text-zinc-400">
-      {day && <span className="font-medium text-zinc-700 tabular-nums dark:text-zinc-300">{day}</span>}
-      {/* the two links stay together: on a narrow screen they move to the next line as one */}
-      <span className="ml-auto flex items-center gap-3">
-        {commentUrl && (
-          <a href={commentUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:underline">
-            Open comment
-            <Icon name="external" className="h-3 w-3" />
-          </a>
-        )}
-        {postUrl && (
-          <a href={postUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:underline">
-            Open post
-            <Icon name="external" className="h-3 w-3" />
-          </a>
-        )}
-      </span>
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+      <span className="w-24 shrink-0 font-medium text-zinc-700 tabular-nums dark:text-zinc-300">{day ?? "—"}</span>
+      {commentUrl && (
+        <a href={commentUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:underline">
+          Comment
+          <Icon name="external" className="h-3 w-3" />
+        </a>
+      )}
+      {postUrl && (
+        <a href={postUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:underline">
+          Post
+          <Icon name="external" className="h-3 w-3" />
+        </a>
+      )}
     </li>
   );
 }
@@ -1162,74 +1453,3 @@ function ContactChip({ type, value, foundIn }: { type: string; value: string; fo
   );
 }
 
-function Lookups({
-  runs,
-  fresh,
-  viewId,
-  onShow,
-}: {
-  runs: Run[];
-  fresh: Run[];
-  viewId?: string;
-  onShow: (run: Run) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  if (runs.length === 0) return null;
-  return (
-    <section aria-labelledby="authors-lookups-title">
-      <h2 id="authors-lookups-title" className={`${EYEBROW} mb-3 flex items-center gap-1.5`}>
-        <Icon name="history" className="h-3.5 w-3.5" />
-        Earlier lookups
-        <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 tabular-nums dark:bg-zinc-800 dark:text-zinc-300">
-          {runs.length}
-        </span>
-      </h2>
-      <div className={`${CARD} overflow-hidden shadow-sm`}>
-        <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {runs.slice(0, expanded ? runs.length : LOOKUP_ROWS).map((listed) => {
-            const run = fresh.find((f) => f.id === listed.id) ?? listed;
-            return (
-              <li key={run.id}>
-                <button
-                  type="button"
-                  onClick={() => onShow(run)}
-                  aria-current={run.id === viewId ? "true" : undefined}
-                  className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset ${
-                    run.id === viewId
-                      ? "bg-zinc-100 shadow-[inset_3px_0_0_var(--color-zinc-900)] dark:bg-zinc-800/70 dark:shadow-[inset_3px_0_0_var(--color-zinc-100)]"
-                      : "hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
-                  }`}
-                >
-                  <span
-                    aria-hidden="true"
-                    className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-zinc-100 text-xs font-semibold text-zinc-600 uppercase dark:bg-zinc-800 dark:text-zinc-300"
-                  >
-                    {(run.username ?? run.title ?? "?").trim().charAt(0) || "?"}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{run.username ?? run.title}</span>
-                    <span className="block text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-                      <LocalTime epoch={run.started_at} /> · {run.contacts_found ?? 0} contacts ·{" "}
-                      {run.authors_found ?? 0} authors · {run.comments_found ?? 0} comments read
-                    </span>
-                  </span>
-                  <StatusPill status={run.status} />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        {runs.length > LOOKUP_ROWS && (
-          <button
-            type="button"
-            onClick={() => setExpanded((e) => !e)}
-            aria-expanded={expanded}
-            className="w-full border-t border-zinc-200 px-4 py-2.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900/60"
-          >
-            {expanded ? "Show fewer" : `Show ${runs.length - LOOKUP_ROWS} more`}
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}

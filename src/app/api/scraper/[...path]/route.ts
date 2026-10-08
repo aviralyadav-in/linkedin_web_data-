@@ -14,7 +14,17 @@ const ALLOWED: Record<string, RegExp[]> = {
     new RegExp(`^comments/${ID}$`),
     new RegExp(`^authors/${ID}$`),
   ],
-  POST: [/^runs$/, new RegExp(`^runs/${ID}/stop$`), /^session\/import$/, /^session\/check$/, /^comments$/, /^authors$/],
+  POST: [
+    /^runs$/,
+    new RegExp(`^runs/${ID}/stop$`),
+    /^session\/import$/,
+    /^session\/check$/,
+    /^comments$/,
+    /^authors$/,
+    // go on with a lookup that stopped part-way
+    new RegExp(`^comments/${ID}/resume$`),
+    new RegExp(`^authors/${ID}/resume$`),
+  ],
 };
 
 const error = (detail: string, status: number) => Response.json({ detail }, { status });
