@@ -799,7 +799,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
 
       <div className="space-y-2 px-3 pb-4">
         <Link
-          href="/comments"
+          href="/comments/authors"
           className="flex items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2 text-sm transition-colors hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
         >
           <svg
