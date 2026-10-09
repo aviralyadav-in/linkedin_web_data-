@@ -911,7 +911,11 @@ function Summary({
               LinkedIn login needed
             </div>
             On your PC: log in to LinkedIn in the Chrome window that opened, and the lookup continues by itself. On a
-            server: stop it and upload a session file on the Commands page.
+            server: stop it and upload a session file in{" "}
+            <Link href="/settings" className="font-semibold underline underline-offset-2">
+              Settings
+            </Link>
+            .
           </div>
         )}
 

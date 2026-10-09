@@ -6,9 +6,9 @@ const TABS = [
   { key: "authors", href: "/comments/authors", label: "User comments account data", short: "Account data" },
 ] as const;
 
-// Switches between the scraper's pages; in the header of each. On a phone it takes its own row, with a shorter
-// name for the third tab so all three fit.
-export default function PageTabs({ active }: { active: (typeof TABS)[number]["key"] }) {
+// Switches between the scraper's pages; in the header of each (on Settings, which isn't one of them, none is
+// active). On a phone it takes its own row, with a shorter name for the third tab so all three fit.
+export default function PageTabs({ active }: { active?: (typeof TABS)[number]["key"] }) {
   return (
     <nav
       aria-label="Scraper pages"

@@ -1,5 +1,5 @@
 // Skeleton that mirrors the commands page: header, the run form, the run panel (on the right on a wide screen),
-// then history and the session card.
+// then history.
 export default function Loading() {
   return (
     <div className="w-full" aria-busy="true" aria-label="Loading commands">
@@ -37,7 +37,6 @@ export default function Loading() {
         <div className="h-96 animate-pulse rounded-xl border border-zinc-200 bg-white lg:col-start-2 lg:row-span-2 lg:row-start-1 dark:border-zinc-800 dark:bg-zinc-950" />
         <div className="animate-pulse space-y-6">
           <div className="h-64 rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" />
-          <div className="h-48 rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" />
         </div>
       </div>
     </div>

@@ -330,16 +330,35 @@ type Props = {
   initialCommands: CommandsResponse | null;
   initialStatus: ScraperStatus | null;
   initialRuns: Run[] | null; // null: the history couldn't be loaded, the page asks again
+  // "commands": the run form, the run panel and the history; "settings": the LinkedIn login card and the run panel,
+  // which there follows only the login jobs (session upload and check)
+  page?: "commands" | "settings";
 };
 
-export default function CommandsPanel({ configured, initialLink, initialCommands, initialStatus, initialRuns }: Props) {
+const SESSION_KINDS: Run["kind"][] = ["session_import", "session_check"];
+
+// Is this run one the page's run panel follows? On the settings page only the login jobs (session upload, check).
+function shownOn(page: "commands" | "settings", run: Run | null | undefined): run is Run {
+  return !!run && (page === "commands" || SESSION_KINDS.includes(run.kind));
+}
+
+export default function CommandsPanel({
+  configured,
+  initialLink,
+  initialCommands,
+  initialStatus,
+  initialRuns,
+  page = "commands",
+}: Props) {
   const [commands, setCommands] = useState(initialCommands);
   const [status, setStatus] = useState(initialStatus);
   const [link, setLink] = useState(initialLink);
   const [runs, setRuns] = useState(initialRuns ?? []);
-  // the run whose logs are on screen: the running one, else the last one, else one picked from history
+  // the run whose logs are on screen: the running one, else the last one, else one picked from history (on the
+  // settings page: the newest login job)
   const [view, setView] = useState<View | null>(() => {
-    const run = initialStatus?.current ?? initialStatus?.last;
+    const run = [initialStatus?.current, initialStatus?.last, ...(page === "settings" ? (initialRuns ?? []) : [])]
+      .find((r) => shownOn(page, r));
     return run ? { run, lines: [], next: 0, loaded: false } : null;
   });
   const [message, setMessage] = useState<string | null>(null);
@@ -404,16 +423,17 @@ export default function CommandsPanel({ configured, initialLink, initialCommands
           const prevLast = lastIdRef.current;
           lastIdRef.current = s.last?.id;
           // a new job (from here, another tab or the other machine) -> follow its logs
+          const opened = [s.current, s.last].find((r) => shownOn(page, r));
           if (s.current && s.current.id !== followedRef.current) {
             followedRef.current = s.current.id;
-            show(s.current);
-          } else if (!viewIdRef.current && (s.current ?? s.last)) {
-            show((s.current ?? s.last)!); // page opened while the API was down
+            if (shownOn(page, s.current)) show(s.current);
+          } else if (!viewIdRef.current && opened) {
+            show(opened); // page opened while the API was down
           } else if (
             // a job started and ended between two polls (or while this tab was hidden): show it, unless the
             // user is reading an older run they picked from the history
             !s.current &&
-            s.last &&
+            shownOn(page, s.last) &&
             s.last.id !== prevLast &&
             s.last.id !== followedRef.current &&
             (viewIdRef.current === prevLast || viewIdRef.current === followedRef.current)
@@ -471,7 +491,7 @@ export default function CommandsPanel({ configured, initialLink, initialCommands
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [configured]);
+  }, [configured, page]);
 
   // Follow the log of the run on screen until it has finished.
   const viewId = view?.run.id;
@@ -587,12 +607,12 @@ export default function CommandsPanel({ configured, initialLink, initialCommands
             <Icon name="back" />
           </Link>
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-semibold tracking-tight">Commands</h1>
+            <h1 className="text-base font-semibold tracking-tight">{page === "settings" ? "Settings" : "Commands"}</h1>
             <p className="hidden truncate text-xs text-zinc-500 sm:block dark:text-zinc-400">
-              Run the LinkedIn scraper without a terminal
+              {page === "settings" ? "LinkedIn login on a server" : "Run the LinkedIn scraper without a terminal"}
             </p>
           </div>
-          <PageTabs active="commands" />
+          <PageTabs active={page === "commands" ? "commands" : undefined} />
           <ApiBadge configured={configured} link={link} busy={busy} />
         </div>
       </header>
@@ -637,23 +657,31 @@ export default function CommandsPanel({ configured, initialLink, initialCommands
                 </Notice>
               )}
 
-              <RunForm
-                fields={fields}
-                defaults={defaults}
-                maxValue={maxValue}
-                blockedReason={
-                  link === "token"
-                    ? "The scraper API rejects this app's token (see above)."
-                    : offline
-                      ? "The scraper API isn't reachable right now."
-                      : busy
-                        ? "A run is in progress. Wait for it to finish, or stop it."
-                        : null
-                }
-                blocked={blocked}
-                starting={pending === "run"}
-                onRun={(values) => start("run", "start", () => post<Run>("runs", { command_id: "custom", values }))}
-              />
+              {page === "settings" ? (
+                <SessionTools
+                  disabled={blocked}
+                  onUpload={uploadSession}
+                  onCheck={() => start("check", "session", () => post<Run>("session/check"))}
+                />
+              ) : (
+                <RunForm
+                  fields={fields}
+                  defaults={defaults}
+                  maxValue={maxValue}
+                  blockedReason={
+                    link === "token"
+                      ? "The scraper API rejects this app's token (see above)."
+                      : offline
+                        ? "The scraper API isn't reachable right now."
+                        : busy
+                          ? "A run is in progress. Wait for it to finish, or stop it."
+                          : null
+                  }
+                  blocked={blocked}
+                  starting={pending === "run"}
+                  onRun={(values) => start("run", "start", () => post<Run>("runs", { command_id: "custom", values }))}
+                />
+              )}
             </div>
 
             {/* scroll-mt clears the sticky header, which is two rows (title, tabs) on a phone */}
@@ -669,18 +697,15 @@ export default function CommandsPanel({ configured, initialLink, initialCommands
                 stopping={pending === "stop" || current?.status === "stopped"}
                 onStop={stop}
                 onShow={open}
+                page={page}
               />
             </aside>
 
-            <div className="min-w-0 space-y-6">
-              <History runs={runs} viewId={view?.run.id} onShow={open} />
-
-              <SessionTools
-                disabled={blocked}
-                onUpload={uploadSession}
-                onCheck={() => start("check", "session", () => post<Run>("session/check"))}
-              />
-            </div>
+            {page === "commands" && (
+              <div className="min-w-0 space-y-6">
+                <History runs={runs} viewId={view?.run.id} onShow={open} />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1104,6 +1129,7 @@ function RunPanel({
   stopping,
   onStop,
   onShow,
+  page,
 }: {
   view: View | null;
   current: Run | null;
@@ -1111,6 +1137,7 @@ function RunPanel({
   stopping: boolean;
   onStop: () => void;
   onShow: (run: Run) => void;
+  page: "commands" | "settings";
 }) {
   const run = view?.run ?? null;
   const running = run?.status === "running";
@@ -1154,7 +1181,13 @@ function RunPanel({
             {link === "online" ? "No runs yet" : link === "token" ? "Runs can't be loaded" : "Waiting for the scraper API"}
           </div>
           <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-            {link === "online" ? (
+            {link === "online" && page === "settings" ? (
+              <>
+                Upload a session file or press{" "}
+                <strong className="font-medium text-zinc-700 dark:text-zinc-300">Check login</strong>. Progress and the
+                output show up here.
+              </>
+            ) : link === "online" ? (
               <>
                 Pick the steps and press{" "}
                 <strong className="font-medium text-zinc-700 dark:text-zinc-300">Start run</strong>. Progress and the
@@ -1277,7 +1310,11 @@ function RunPanel({
                 LinkedIn login needed
               </div>
               On your PC: log in to LinkedIn in the Chrome window that opened, and the run continues by itself. On a
-              server: stop the run and upload a session file below.
+              server: stop the run and upload a session file in{" "}
+              <Link href="/settings" className="font-semibold underline underline-offset-2">
+                Settings
+              </Link>
+              .
             </div>
           )}
 
