@@ -1,7 +1,7 @@
 import "server-only";
 
 import { scraperConfigured, scraperFetch } from "@/lib/scraper";
-import type { CommandsResponse, Run, ScraperStatus } from "@/lib/scraper-types";
+import type { CommandsResponse, Run, ScraperStatus, SessionStatus } from "@/lib/scraper-types";
 
 import type { Link } from "./commands-panel";
 
@@ -13,6 +13,9 @@ async function load<T>(path: string): Promise<T | null> {
     return null;
   }
 }
+
+// Settings: the LinkedIn login on the scraper's machine (null from an API that doesn't tell it yet)
+export const loadSession = () => load<SessionStatus>("session");
 
 // What the Commands and Settings pages start with: the scraper API's state, its commands and the run history.
 export async function loadPanel() {

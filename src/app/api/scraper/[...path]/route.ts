@@ -11,6 +11,7 @@ const ALLOWED: Record<string, RegExp[]> = {
     /^runs$/,
     new RegExp(`^runs/${ID}$`),
     /^help$/,
+    /^session$/,
     new RegExp(`^comments/${ID}$`),
     new RegExp(`^authors/${ID}$`),
   ],
@@ -19,6 +20,7 @@ const ALLOWED: Record<string, RegExp[]> = {
     new RegExp(`^runs/${ID}/stop$`),
     /^session\/import$/,
     /^session\/check$/,
+    /^session\/delete$/,
     /^comments$/,
     /^authors$/,
     // go on with a lookup that stopped part-way

@@ -11,6 +11,7 @@ import type {
   RunLog,
   RunStatus,
   ScraperStatus,
+  SessionStatus,
 } from "@/lib/scraper-types";
 
 import { authorsHref, authorsResult } from "../comments/authors/authors-result";
@@ -333,6 +334,7 @@ type Props = {
   // "commands": the run form, the run panel and the history; "settings": the LinkedIn login card and the run panel,
   // which there follows only the login jobs (session upload and check)
   page?: "commands" | "settings";
+  initialSession?: SessionStatus | null; // settings: the LinkedIn login the server has
 };
 
 const SESSION_KINDS: Run["kind"][] = ["session_import", "session_check"];
@@ -349,6 +351,7 @@ export default function CommandsPanel({
   initialStatus,
   initialRuns,
   page = "commands",
+  initialSession = null,
 }: Props) {
   const [commands, setCommands] = useState(initialCommands);
   const [status, setStatus] = useState(initialStatus);
@@ -363,6 +366,9 @@ export default function CommandsPanel({
   });
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  // settings: the LinkedIn login the server has (null until known), and whether the API can't tell it (older api.py)
+  const [session, setSession] = useState<SessionStatus | null>(initialSession);
+  const [sessionUnknown, setSessionUnknown] = useState(false);
 
   const busy = status?.busy ?? false;
   const busyRef = useRef(busy);
@@ -549,6 +555,26 @@ export default function CommandsPanel({
     };
   }, [viewId]);
 
+  // Settings: the session again whenever a job starts or ends (an upload or a check changes it), or the API is back
+  const jobKey = `${status?.current?.id}|${status?.current?.status}|${status?.last?.id}`;
+  useEffect(() => {
+    if (page !== "settings" || link !== "online") return;
+    let cancelled = false;
+    api<SessionStatus>("session").then(
+      (s) => {
+        if (cancelled) return;
+        setSession(s);
+        setSessionUnknown(false);
+      },
+      (e) => {
+        if (!cancelled && e instanceof ApiError && e.status === 404) setSessionUnknown(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [page, link, jobKey]);
+
   async function start(key: string, action: Action, request: () => Promise<Run>) {
     setPending(key);
     setMessage(null);
@@ -589,6 +615,30 @@ export default function CommandsPanel({
       return;
     }
     start("session", "session", () => post<Run>("session/import", body));
+  }
+
+  // Settings: delete the server's LinkedIn session, so that another one can be uploaded
+  async function deleteSession() {
+    const sure = window.confirm(
+      "Delete the LinkedIn session on the server? Runs there can't log in to LinkedIn until a new session is uploaded.",
+    );
+    if (!sure) return;
+    setPending("delete");
+    setMessage(null);
+    try {
+      setSession(await post<SessionStatus>("session/delete"));
+    } catch (e) {
+      const code = e instanceof ApiError ? e.status : 0;
+      setMessage(
+        code === 409
+          ? "A run is using the browser. Let it finish or stop it, then delete the session."
+          : code === 404
+            ? "The scraper API can't delete sessions yet. Restart it so it runs the latest api.py."
+            : errorText(e, "session", maxValue),
+      );
+    } finally {
+      setPending(null);
+    }
   }
 
   const current = status?.current ?? null;
@@ -660,6 +710,7 @@ export default function CommandsPanel({
               {page === "settings" ? (
                 <SessionTools
                   disabled={blocked}
+                  hasSession={!!session?.session}
                   onUpload={uploadSession}
                   onCheck={() => start("check", "session", () => post<Run>("session/check"))}
                 />
@@ -688,17 +739,28 @@ export default function CommandsPanel({
             <aside
               ref={panelRef}
               className="min-w-0 scroll-mt-32 sm:scroll-mt-20 lg:sticky lg:top-20 lg:col-start-2 lg:row-span-2 lg:row-start-1"
-              aria-label="Run status"
+              aria-label={page === "settings" ? "Session on the server" : "Run status"}
             >
-              <RunPanel
-                view={view}
-                current={current}
-                link={link}
-                stopping={pending === "stop" || current?.status === "stopped"}
-                onStop={stop}
-                onShow={open}
-                page={page}
-              />
+              {page === "settings" ? (
+                <SessionCard
+                  session={session}
+                  unknown={sessionUnknown}
+                  current={current}
+                  link={link}
+                  blocked={blocked}
+                  deleting={pending === "delete"}
+                  onDelete={deleteSession}
+                />
+              ) : (
+                <RunPanel
+                  view={view}
+                  current={current}
+                  link={link}
+                  stopping={pending === "stop" || current?.status === "stopped"}
+                  onStop={stop}
+                  onShow={open}
+                />
+              )}
             </aside>
 
             {page === "commands" && (
@@ -1129,7 +1191,6 @@ function RunPanel({
   stopping,
   onStop,
   onShow,
-  page,
 }: {
   view: View | null;
   current: Run | null;
@@ -1137,7 +1198,6 @@ function RunPanel({
   stopping: boolean;
   onStop: () => void;
   onShow: (run: Run) => void;
-  page: "commands" | "settings";
 }) {
   const run = view?.run ?? null;
   const running = run?.status === "running";
@@ -1181,13 +1241,7 @@ function RunPanel({
             {link === "online" ? "No runs yet" : link === "token" ? "Runs can't be loaded" : "Waiting for the scraper API"}
           </div>
           <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-            {link === "online" && page === "settings" ? (
-              <>
-                Upload a session file or press{" "}
-                <strong className="font-medium text-zinc-700 dark:text-zinc-300">Check login</strong>. Progress and the
-                output show up here.
-              </>
-            ) : link === "online" ? (
+            {link === "online" ? (
               <>
                 Pick the steps and press{" "}
                 <strong className="font-medium text-zinc-700 dark:text-zinc-300">Start run</strong>. Progress and the
@@ -1463,13 +1517,16 @@ function History({ runs, viewId, onShow }: { runs: Run[]; viewId?: string; onSho
 
 function SessionTools({
   disabled,
+  hasSession,
   onUpload,
   onCheck,
 }: {
   disabled: boolean;
+  hasSession: boolean; // the server has a session already: it is deleted before another is uploaded
   onUpload: (file: File) => void;
   onCheck: () => void;
 }) {
+  const uploadOff = disabled || hasSession;
   const exportCommand = "python linkedin_session.py export linkedin_session.json";
   return (
     <section className={`${CARD} p-4 sm:p-5`} aria-labelledby="session-title">
@@ -1489,7 +1546,7 @@ function SessionTools({
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         <label
-          className={`${SECONDARY} cursor-pointer focus-within:outline-hidden focus-within:ring-2 focus-within:ring-zinc-400 focus-within:ring-offset-2 dark:focus-within:ring-offset-zinc-950 ${disabled ? "pointer-events-none opacity-50" : ""}`}
+          className={`${SECONDARY} cursor-pointer focus-within:outline-hidden focus-within:ring-2 focus-within:ring-zinc-400 focus-within:ring-offset-2 dark:focus-within:ring-offset-zinc-950 ${uploadOff ? "pointer-events-none opacity-50" : ""}`}
         >
           <Icon name="upload" />
           Upload session file
@@ -1497,7 +1554,7 @@ function SessionTools({
             type="file"
             accept=".json,application/json"
             className="sr-only"
-            disabled={disabled}
+            disabled={uploadOff}
             onChange={(e) => {
               const file = e.target.files?.[0];
               e.target.value = "";
@@ -1510,6 +1567,133 @@ function SessionTools({
           Check login
         </button>
       </div>
+      {hasSession && (
+        <p className="mt-3 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          The server has a session already. To upload another one, delete it first under Session on the server.
+        </p>
+      )}
+    </section>
+  );
+}
+
+const SESSION_BROWSER = { waterfox: "Waterfox", chrome: "Chrome" } as const;
+
+const TONE = {
+  green: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  red: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+  amber: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  sky: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
+  zinc: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+};
+
+function Tag({ tone, children }: { tone: keyof typeof TONE; children: ReactNode }) {
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${TONE[tone]}`}>{children}</span>;
+}
+
+function SessionRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2">
+      <dt className="text-zinc-500 dark:text-zinc-400">{label}</dt>
+      <dd className="text-right font-medium">{children}</dd>
+    </div>
+  );
+}
+
+const dayDate = (iso: string) =>
+  new Date(iso).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+
+// a date formatted in the browser only, as LocalTime
+function LocalDate({ iso }: { iso: string }) {
+  return useSyncExternalStore(subscribeNothing, () => dayDate(iso), () => "");
+}
+
+// Settings: the LinkedIn login the server has (in the place of the Commands page's run panel): whether there is a
+// session, whether it works (the newest upload or check, or one running now), and Delete session.
+function SessionCard({
+  session,
+  unknown,
+  current,
+  link,
+  blocked,
+  deleting,
+  onDelete,
+}: {
+  session: SessionStatus | null;
+  unknown: boolean;
+  current: Run | null;
+  link: Link;
+  blocked: boolean;
+  deleting: boolean;
+  onDelete: () => void;
+}) {
+  const running = current?.status === "running" && SESSION_KINDS.includes(current.kind) ? current : null;
+  const check = running ?? session?.last_check ?? null;
+  const has = !!session?.session;
+
+  let works: ReactNode;
+  if (running) works = <Tag tone="sky">{running.kind === "session_import" ? "Uploading now..." : "Checking now..."}</Tag>;
+  else if (!has) works = <span className="text-zinc-500 dark:text-zinc-400">No session to check</span>;
+  else if (!check) works = <span className="text-zinc-500 dark:text-zinc-400">Not checked yet</span>;
+  else if (check.status === "succeeded") works = <Tag tone="green">Yes, it works</Tag>;
+  else if (check.exit_code === 3) works = <Tag tone="red">No, not logged in</Tag>;
+  else works = <Tag tone="amber">Couldn&apos;t check</Tag>;
+
+  return (
+    <section className={`${CARD} p-4 sm:p-5`} aria-labelledby="session-state-title">
+      <h2 id="session-state-title" className="flex items-center gap-2 text-sm font-semibold">
+        <Icon name="shield" />
+        Session on the server
+      </h2>
+      {link !== "online" || unknown || !session ? (
+        <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {link === "token"
+            ? "It shows up here once the API token matches."
+            : link !== "online"
+              ? "It shows up here once the scraper API is reachable."
+              : unknown
+                ? "The scraper API doesn't tell the session yet. Restart it so it runs the latest api.py."
+                : "Loading..."}
+        </p>
+      ) : (
+        <>
+          <dl className="mt-3 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+            <SessionRow label="Session">
+              {has ? <Tag tone="green">Uploaded</Tag> : <Tag tone="zinc">No session</Tag>}
+            </SessionRow>
+            <SessionRow label="Login works">{works}</SessionRow>
+            {(has || running) && check && (
+              <SessionRow label="Last checked">
+                {running ? "Now" : <LocalTime epoch={check.ended_at ?? check.started_at} />}
+              </SessionRow>
+            )}
+            {session.expires && (
+              <SessionRow label={has ? "Login cookie expires" : "Login cookie expired"}>
+                <LocalDate iso={session.expires} />
+              </SessionRow>
+            )}
+            <SessionRow label="Browser">{SESSION_BROWSER[session.browser]}</SessionRow>
+          </dl>
+          {(has || running) && check && check.status !== "running" && (
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              {sessionResult(check).replace(" See the output below.", "")}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={!has || blocked}
+            className={`${BUTTON} mt-4 w-full border border-red-200 text-red-700 hover:border-red-400 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40`}
+          >
+            <Icon name="x" />
+            {deleting ? "Deleting..." : "Delete session"}
+          </button>
+          <p className="mt-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            {has
+              ? "To upload another session, delete this one first. Runs on the server can't log in to LinkedIn until a new one is uploaded."
+              : "No LinkedIn login on the server: upload a session file."}
+          </p>
+        </>
+      )}
     </section>
   );
 }

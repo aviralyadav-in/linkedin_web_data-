@@ -58,6 +58,14 @@ export type Run = {
 
 export type ScraperStatus = { busy: boolean; current: Run | null; last: Run | null };
 
+// The LinkedIn login on the scraper's machine (api.py GET /api/session)
+export type SessionStatus = {
+  browser: "waterfox" | "chrome"; // the browser the runs use there
+  session: boolean; // its profile has a LinkedIn login cookie that hasn't expired
+  expires: string | null; // when that cookie expires (ISO time)
+  last_check: Run | null; // the newest login job (session import or check), with its result
+};
+
 export type RunLog = { run: Run; lines: string[]; next: number };
 
 export type ContactType = "email" | "phone" | "whatsapp" | "telegram" | "linkedin";
