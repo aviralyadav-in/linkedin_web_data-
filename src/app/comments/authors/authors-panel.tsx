@@ -39,6 +39,7 @@ import {
   linkFromError,
   post,
   useNow,
+  useRunMode,
 } from "../../commands/commands-panel";
 import PageTabs from "../../page-tabs";
 import {
@@ -255,6 +256,7 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
   });
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState<"start" | "stop" | "continue" | null>(null);
+  const [modeDialog, askMode] = useRunMode();
 
   const busy = status?.busy ?? false;
   const busyRef = useRef(busy);
@@ -424,10 +426,12 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
 
   // limit null: Unlimited, every comment
   async function start(profile: string, limit: number | null) {
+    const headless = await askMode(); // headed or headless browser
+    if (headless === null) return;
     setPending("start");
     setMessage(null);
     try {
-      const run = await post<Run>("authors", { profile, limit });
+      const run = await post<Run>("authors", { profile, limit, headless });
       busyRef.current = true;
       followedRef.current = run.id;
       setStatus((s) => ({ busy: true, current: run, last: s?.last ?? null }));
@@ -455,10 +459,12 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
 
   // a lookup that stopped part-way goes on from where it stopped: a new run that starts with what it found
   async function goOn(id: string) {
+    const headless = await askMode(); // headed or headless browser
+    if (headless === null) return;
     setPending("continue");
     setMessage(null);
     try {
-      const run = await post<Run>(`authors/${id}/resume`);
+      const run = await post<Run>(`authors/${id}/resume`, { headless });
       busyRef.current = true;
       followedRef.current = run.id;
       setStatus((s) => ({ busy: true, current: run, last: s?.last ?? null }));
@@ -489,6 +495,7 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
 
   return (
     <div className="w-full">
+      {modeDialog}
       <p className="sr-only" aria-live="polite">
         {live}
       </p>

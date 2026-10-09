@@ -10,6 +10,7 @@ import type {
   Run,
   RunLog,
   RunStatus,
+  ProxyStatus,
   ScraperStatus,
   SessionStatus,
 } from "@/lib/scraper-types";
@@ -323,6 +324,72 @@ export function useNow(active: boolean) {
   return now;
 }
 
+// Before any run starts: does its browser open with a window (headed) or without one (headless)? `ask()` shows the
+// dialog (rendered where `dialog` is placed) and resolves to true (headless), false (headed) or null (cancelled).
+export function useRunMode(): [ReactNode, () => Promise<boolean | null>] {
+  const [answer, setAnswer] = useState<((headless: boolean | null) => void) | null>(null);
+  const ask = () => new Promise<boolean | null>((resolve) => setAnswer(() => resolve));
+  const dialog = answer ? (
+    <RunModeDialog
+      onAnswer={(headless) => {
+        answer(headless);
+        setAnswer(null);
+      }}
+    />
+  ) : null;
+  return [dialog, ask];
+}
+
+const MODE_OPTION =
+  "flex w-full flex-col items-start gap-1 rounded-lg border border-zinc-200 px-4 py-3 text-left transition-colors hover:border-zinc-400 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500";
+
+// A native modal <dialog>, like the dashboard's delete dialog: Escape or Cancel closes it without a choice.
+function RunModeDialog({ onAnswer }: { onAnswer: (headless: boolean | null) => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const chosen = useRef<boolean | null>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+  const choose = (headless: boolean) => {
+    chosen.current = headless;
+    ref.current?.close();
+  };
+  return (
+    <dialog
+      ref={ref}
+      onClose={() => onAnswer(chosen.current)}
+      aria-labelledby="mode-title"
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-zinc-200 bg-white p-5 text-zinc-900 shadow-xl backdrop:bg-black/40 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+    >
+      <h2 id="mode-title" className="text-base font-semibold">
+        How should the browser run?
+      </h2>
+      <div className="mt-4 space-y-2">
+        <button type="button" autoFocus onClick={() => choose(false)} className={MODE_OPTION}>
+          <span className="text-sm font-medium">Headed</span>
+          <span className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            With a browser window. On your PC you see it and can log in to LinkedIn there; on a server it runs in
+            its virtual screen.
+          </span>
+        </button>
+        <button type="button" onClick={() => choose(true)} className={MODE_OPTION}>
+          <span className="text-sm font-medium">Headless</span>
+          <span className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            Without a window, in the background. LinkedIn has to be logged in already: there is no window to log
+            in.
+          </span>
+        </button>
+      </div>
+      <div className="mt-4 flex justify-end">
+        <button type="button" onClick={() => ref.current?.close()} className={SECONDARY}>
+          Cancel
+        </button>
+      </div>
+    </dialog>
+  );
+}
+
 type View = { run: Run; lines: string[]; next: number; loaded: boolean; gone?: boolean };
 
 type Props = {
@@ -366,6 +433,7 @@ export default function CommandsPanel({
   });
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [modeDialog, askMode] = useRunMode();
   // settings: the LinkedIn login the server has (null until known), and whether the API can't tell it (older api.py)
   const [session, setSession] = useState<SessionStatus | null>(initialSession);
   const [sessionUnknown, setSessionUnknown] = useState(false);
@@ -575,11 +643,13 @@ export default function CommandsPanel({
     };
   }, [page, link, jobKey]);
 
-  async function start(key: string, action: Action, request: () => Promise<Run>) {
+  async function start(key: string, action: Action, request: (headless: boolean) => Promise<Run>) {
+    const headless = await askMode(); // headed or headless browser
+    if (headless === null) return; // cancelled
     setPending(key);
     setMessage(null);
     try {
-      const run = await request();
+      const run = await request(headless);
       busyRef.current = true;
       followedRef.current = run.id;
       setStatus((s) => ({ busy: true, current: run, last: s?.last ?? null }));
@@ -614,7 +684,9 @@ export default function CommandsPanel({
       setMessage("That isn't a JSON file. Pick the linkedin_session.json file made by the export command.");
       return;
     }
-    start("session", "session", () => post<Run>("session/import", body));
+    start("session", "session", (headless) =>
+      post<Run>("session/import", { ...(body as Record<string, unknown>), headless }),
+    );
   }
 
   // Settings: delete the server's LinkedIn session, so that another one can be uploaded
@@ -647,6 +719,7 @@ export default function CommandsPanel({
 
   return (
     <div className="w-full">
+      {modeDialog}
       <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/85 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/85">
         <div className="flex w-full flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
           <Link
@@ -708,12 +781,15 @@ export default function CommandsPanel({
               )}
 
               {page === "settings" ? (
-                <SessionTools
-                  disabled={blocked}
-                  hasSession={!!session?.session}
-                  onUpload={uploadSession}
-                  onCheck={() => start("check", "session", () => post<Run>("session/check"))}
-                />
+                <>
+                  <SessionTools
+                    disabled={blocked}
+                    hasSession={!!session?.session}
+                    onUpload={uploadSession}
+                    onCheck={() => start("check", "session", (headless) => post<Run>("session/check", { headless }))}
+                  />
+                  <ProxyCard link={link} />
+                </>
               ) : (
                 <RunForm
                   fields={fields}
@@ -730,7 +806,9 @@ export default function CommandsPanel({
                   }
                   blocked={blocked}
                   starting={pending === "run"}
-                  onRun={(values) => start("run", "start", () => post<Run>("runs", { command_id: "custom", values }))}
+                  onRun={(values) =>
+                    start("run", "start", (headless) => post<Run>("runs", { command_id: "custom", values, headless }))
+                  }
                 />
               )}
             </div>
@@ -1527,7 +1605,11 @@ function SessionTools({
   onCheck: () => void;
 }) {
   const uploadOff = disabled || hasSession;
-  const exportCommand = "python linkedin_session.py export linkedin_session.json";
+  // the export command for the browser the LinkedIn login is in on the PC
+  const exportCommands = [
+    { browser: "Chrome", command: "python linkedin_session.py export linkedin_session.json" },
+    { browser: "Waterfox", command: "python waterfox.py linkedin_session.py export linkedin_session.json" },
+  ];
   return (
     <section className={`${CARD} p-4 sm:p-5`} aria-labelledby="session-title">
       <h2 id="session-title" className="flex items-center gap-2 text-sm font-semibold">
@@ -1535,14 +1617,21 @@ function SessionTools({
         LinkedIn login on a server
       </h2>
       <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
-        A server has no screen, so nobody can log in to LinkedIn in its Chrome window. Export your login once on the
-        PC where you are logged in (in the <Code>linkedin-2</Code> folder), then upload the file here.
+        On your PC, in the <Code>linkedin-2</Code> folder, run the command for the browser you are logged in to
+        LinkedIn with:
       </p>
-      <pre className="mt-3 rounded-lg bg-zinc-100 px-3 py-2 font-mono text-xs break-words whitespace-pre-wrap dark:bg-zinc-900">
-        {exportCommand}
-      </pre>
+      <div className="mt-3 space-y-2">
+        {exportCommands.map(({ browser, command }) => (
+          <div key={browser}>
+            <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{browser}</div>
+            <pre className="mt-1 rounded-lg bg-zinc-100 px-3 py-2 font-mono text-xs break-words whitespace-pre-wrap dark:bg-zinc-900">
+              {command}
+            </pre>
+          </div>
+        ))}
+      </div>
       <p className="mt-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-        Delete the file after uploading: it gives full access to your LinkedIn account.
+        Then upload <Code>linkedin_session.json</Code> here, and delete it from your PC.
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         <label
@@ -1605,6 +1694,144 @@ const dayDate = (iso: string) =>
 // a date formatted in the browser only, as LocalTime
 function LocalDate({ iso }: { iso: string }) {
   return useSyncExternalStore(subscribeNothing, () => dayDate(iso), () => "");
+}
+
+// Settings: a warning before the proxy's data runs out ("running low" under these), and when it has
+const PROXY_LOW_GB = 1;
+const PROXY_LOW_SHARE = 0.2;
+
+const gb = (n: number) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10} GB`;
+
+// Settings: the Geonode proxy the server's runs go through: whether it works now or its data has run out, and its
+// data used and left when the API can read them. Fetched when the page opens (the API keeps a check a few
+// minutes) and on Check now.
+function ProxyCard({ link }: { link: Link }) {
+  const [proxy, setProxy] = useState<ProxyStatus | null>(null);
+  const [failed, setFailed] = useState(false); // the API doesn't tell it (an older api.py) or didn't answer
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    if (link !== "online") return;
+    let cancelled = false;
+    api<ProxyStatus>("proxy").then(
+      (p) => {
+        if (cancelled) return;
+        setProxy(p);
+        setFailed(false);
+      },
+      () => {
+        if (!cancelled) setFailed(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [link]);
+
+  async function checkNow() {
+    setChecking(true);
+    try {
+      setProxy(await post<ProxyStatus>("proxy/check"));
+      setFailed(false);
+    } catch {
+      setFailed(true);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  const usage = proxy?.usage ?? null;
+  const share = usage?.used_gb != null && usage.limit_gb ? Math.min(1, usage.used_gb / usage.limit_gb) : null;
+  const low =
+    usage?.left_gb != null &&
+    (usage.left_gb < PROXY_LOW_GB || (usage.limit_gb ? usage.left_gb / usage.limit_gb < PROXY_LOW_SHARE : false));
+
+  let state: ReactNode = null;
+  let note: string | null = null;
+  if (proxy?.configured && proxy.status) {
+    if (proxy.status === "limit") {
+      state = <Tag tone="red">Data used up</Tag>;
+      note =
+        "Geonode's data has run out, so runs through the proxy stop. Buy more data in Geonode, or take the GEONODE_ lines out of the server's .env to run without it.";
+    } else if (proxy.status === "login") {
+      state = <Tag tone="red">Login refused</Tag>;
+      note = "Geonode refused the login: check GEONODE_USER_BASE and GEONODE_PASS in the server's .env, or the plan.";
+    } else if (proxy.status !== "ok") {
+      state = <Tag tone="amber">Couldn&apos;t reach Geonode</Tag>;
+      note = proxy.answer ? `Geonode's answer: ${proxy.answer}` : null;
+    } else if (low) {
+      state = <Tag tone="amber">Running low</Tag>;
+      note = "Not much data left: buy more in Geonode before it runs out, or runs through the proxy will stop.";
+    } else {
+      state = <Tag tone="green">Working</Tag>;
+    }
+  }
+
+  return (
+    <section className={`${CARD} p-4 sm:p-5`} aria-labelledby="proxy-title">
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="proxy-title" className="flex items-center gap-2 text-sm font-semibold">
+          <Icon name="zap" />
+          Proxy data (Geonode)
+        </h2>
+        {proxy?.configured && (
+          <button type="button" className={SECONDARY} disabled={checking || link !== "online"} onClick={checkNow}>
+            <Icon name="reset" />
+            {checking ? "Checking..." : "Check now"}
+          </button>
+        )}
+      </div>
+      {link !== "online" || failed || !proxy ? (
+        <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {link !== "online"
+            ? "It shows up here once the scraper API is reachable."
+            : failed
+              ? "The scraper API doesn't tell the proxy yet. Restart it so it runs the latest api.py."
+              : "Loading..."}
+        </p>
+      ) : !proxy.configured ? (
+        <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          No proxy is set up on the server (no GEONODE_ lines in its .env): runs use the server&apos;s own internet.
+        </p>
+      ) : (
+        <>
+          <dl className="mt-3 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+            <SessionRow label="Status">{state}</SessionRow>
+            {usage?.used_gb != null && (
+              <SessionRow label="Data used">
+                {gb(usage.used_gb)}
+                {usage.limit_gb ? ` of ${gb(usage.limit_gb)}` : ""}
+              </SessionRow>
+            )}
+            {usage?.left_gb != null && <SessionRow label="Data left">{gb(usage.left_gb)}</SessionRow>}
+            <SessionRow label="Gateway">
+              {proxy.host}:{proxy.port}
+              {proxy.country ? ` · ${proxy.country}` : ""}
+            </SessionRow>
+            <SessionRow label="Checked">
+              <LocalTime epoch={proxy.checked_at} />
+            </SessionRow>
+          </dl>
+          {share !== null && (
+            <div
+              className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800"
+              role="img"
+              aria-label={`${Math.round(share * 100)}% of the data used`}
+            >
+              <div
+                className={`h-full rounded-full ${low || proxy.status === "limit" ? "bg-red-500" : "bg-emerald-500"}`}
+                style={{ width: `${Math.round(share * 100)}%` }}
+              />
+            </div>
+          )}
+          {note && <p className="mt-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{note}</p>}
+          {proxy.usage_note && (
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{proxy.usage_note}</p>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 
 // Settings: the LinkedIn login the server has (in the place of the Commands page's run panel): whether there is a

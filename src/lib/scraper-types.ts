@@ -66,6 +66,27 @@ export type SessionStatus = {
   last_check: Run | null; // the newest login job (session import or check), with its result
 };
 
+// The Geonode proxy on the scraper's machine (api.py GET /api/proxy)
+export type ProxyStatus = {
+  configured: boolean; // GEONODE_* in its .env
+  host?: string;
+  port?: number;
+  country?: string | null;
+  // ok: connections go through; limit: the account's data has run out; login: Geonode refused the login
+  status?: "ok" | "limit" | "login" | "error" | "unreachable";
+  answer?: string; // Geonode's own answer (or why the settings can't be used)
+  usage?: ProxyUsage | null; // from Geonode's API, when the API can read it
+  usage_note?: string | null; // why there is no usage
+  checked_at: number;
+};
+
+export type ProxyUsage = {
+  used_gb: number | null;
+  limit_gb: number | null; // the plan's data
+  left_gb: number | null;
+  expires: string | null; // when the plan ends (ISO time)
+};
+
 export type RunLog = { run: Run; lines: string[]; next: number };
 
 export type ContactType = "email" | "phone" | "whatsapp" | "telegram" | "linkedin";

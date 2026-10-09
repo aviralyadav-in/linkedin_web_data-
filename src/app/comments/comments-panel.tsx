@@ -40,6 +40,7 @@ import {
   linkFromError,
   post,
   useNow,
+  useRunMode,
 } from "../commands/commands-panel";
 import PageTabs from "../page-tabs";
 import { commentsHref, commentsResult } from "./comments-result";
@@ -258,6 +259,7 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
   });
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState<"start" | "stop" | "continue" | null>(null);
+  const [modeDialog, askMode] = useRunMode();
 
   const busy = status?.busy ?? false;
   const busyRef = useRef(busy);
@@ -448,10 +450,12 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
 
   // limit null: Unlimited, every comment; contacts: only the contact details in them
   async function start(profile: string, limit: number | null, contacts: boolean) {
+    const headless = await askMode(); // headed or headless browser
+    if (headless === null) return;
     setPending("start");
     setMessage(null);
     try {
-      const run = await post<Run>("comments", { profile, limit, contacts });
+      const run = await post<Run>("comments", { profile, limit, contacts, headless });
       busyRef.current = true;
       followedRef.current = run.id;
       setStatus((s) => ({ busy: true, current: run, last: s?.last ?? null }));
@@ -483,10 +487,12 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
 
   // a lookup that stopped part-way goes on from where it stopped: a new run that starts with what it found
   async function goOn(id: string) {
+    const headless = await askMode(); // headed or headless browser
+    if (headless === null) return;
     setPending("continue");
     setMessage(null);
     try {
-      const run = await post<Run>(`comments/${id}/resume`);
+      const run = await post<Run>(`comments/${id}/resume`, { headless });
       busyRef.current = true;
       followedRef.current = run.id;
       setStatus((s) => ({ busy: true, current: run, last: s?.last ?? null }));
@@ -521,6 +527,7 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
 
   return (
     <div className="w-full">
+      {modeDialog}
       <p className="sr-only" aria-live="polite">
         {live}
       </p>
