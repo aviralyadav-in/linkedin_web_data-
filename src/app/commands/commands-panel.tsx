@@ -782,6 +782,29 @@ export default function CommandsPanel({
 
               {page === "settings" ? (
                 <>
+                  {/* a lookup or a Commands run has the server's browser: the session waits until it ends, or is
+                      stopped here (one waiting for a LinkedIn login would never end on a server) */}
+                  {current && !SESSION_KINDS.includes(current.kind) && (
+                    <Notice
+                      title="A run is going on"
+                      action={
+                        <button
+                          type="button"
+                          onClick={stop}
+                          disabled={pending === "stop" || current.status === "stopped"}
+                          className={SECONDARY}
+                        >
+                          <Icon name="x" />
+                          {pending === "stop" || current.status === "stopped" ? "Stopping..." : "Stop this run"}
+                        </button>
+                      }
+                    >
+                      <span className="font-medium">{current.title}</span> is using the browser on the server, so
+                      Upload session file, Check login and Delete session wait until it has ended.
+                      {current.login_required &&
+                        " It is waiting for a LinkedIn login, which nobody can do in a server's browser: stop it, upload a new session, then start it again (a lookup goes on from where it stopped)."}
+                    </Notice>
+                  )}
                   <SessionTools
                     disabled={blocked}
                     hasSession={!!session?.session}
@@ -867,7 +890,7 @@ export function Code({ children }: { children: ReactNode }) {
   return <code className="rounded bg-zinc-200/70 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-800">{children}</code>;
 }
 
-export function Notice({ title, children }: { title: string; children: ReactNode }) {
+export function Notice({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
       <div className="flex items-center gap-2 font-semibold">
@@ -875,6 +898,7 @@ export function Notice({ title, children }: { title: string; children: ReactNode
         {title}
       </div>
       <p className="mt-1 leading-relaxed">{children}</p>
+      {action && <div className="mt-3">{action}</div>}
     </div>
   );
 }
@@ -1856,6 +1880,9 @@ function SessionCard({
   const running = current?.status === "running" && SESSION_KINDS.includes(current.kind) ? current : null;
   const check = running ?? session?.last_check ?? null;
   const has = !!session?.session;
+  // the old login's profile is still there without a working login (e.g. LinkedIn logged it out): it can be deleted
+  const leftover = !has && !!session?.profile;
+  const otherRun = current !== null && !SESSION_KINDS.includes(current.kind); // a lookup or a Commands run
 
   let works: ReactNode;
   if (running) works = <Tag tone="sky">{running.kind === "session_import" ? "Uploading now..." : "Checking now..."}</Tag>;
@@ -1908,16 +1935,19 @@ function SessionCard({
           <button
             type="button"
             onClick={onDelete}
-            disabled={!has || blocked}
+            disabled={!(has || leftover) || blocked}
             className={`${BUTTON} mt-4 w-full border border-red-200 text-red-700 hover:border-red-400 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40`}
           >
             <Icon name="x" />
             {deleting ? "Deleting..." : "Delete session"}
           </button>
           <p className="mt-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            {otherRun && "A run is going on: stop it first (Stop this run, on this page). "}
             {has
               ? "To upload another session, delete this one first. Runs on the server can't log in to LinkedIn until a new one is uploaded."
-              : "No LinkedIn login on the server: upload a session file."}
+              : leftover
+                ? "No working LinkedIn login on the server: upload a session file. Delete session clears what is left of the old login first, if you want."
+                : "No LinkedIn login on the server: upload a session file."}
           </p>
         </>
       )}

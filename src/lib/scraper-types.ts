@@ -62,6 +62,7 @@ export type ScraperStatus = { busy: boolean; current: Run | null; last: Run | nu
 export type SessionStatus = {
   browser: "waterfox" | "chrome"; // the browser the runs use there
   session: boolean; // its profile has a LinkedIn login cookie that hasn't expired
+  profile?: boolean; // the profile is there, also without a working login (e.g. one LinkedIn logged out); older api.py: unset
   expires: string | null; // when that cookie expires (ISO time)
   last_check: Run | null; // the newest login job (session import or check), with its result
 };
