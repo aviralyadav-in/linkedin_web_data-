@@ -1057,7 +1057,7 @@ function OutputDrawer({
         if (e.target === e.currentTarget) ref.current?.close();
       }}
       aria-labelledby="output-title"
-      className="fixed inset-y-0 right-auto left-0 m-0 h-dvh max-h-none w-full max-w-[min(44rem,calc(100%-3rem))] flex-col border-r border-zinc-800 bg-zinc-950 p-0 text-zinc-200 shadow-2xl transition-transform duration-200 ease-out backdrop:bg-black/40 open:flex starting:open:-translate-x-full"
+      className="fixed inset-y-0 right-auto left-0 m-0 h-dvh max-h-none w-full max-w-[min(34rem,calc(100%-3rem))] flex-col border-r border-zinc-800 bg-zinc-950 p-0 text-zinc-200 shadow-2xl transition-transform duration-200 ease-out backdrop:bg-black/40 open:flex starting:open:-translate-x-full"
     >
       <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-4 py-3">
         {/* divs, not spans: span.rounded-full is reserved for badges/status pills (the tests rely on it) */}
