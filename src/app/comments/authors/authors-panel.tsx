@@ -12,6 +12,7 @@ import type {
   AuthorsResponse,
   AuthorsResult,
   Run,
+  RunLog,
   ScraperStatus,
   UserComment,
 } from "@/lib/scraper-types";
@@ -45,7 +46,6 @@ import PageTabs from "../../page-tabs";
 import {
   DEFAULT_LIMIT,
   MAX_COMMENTS,
-  OutputLog,
   RUN_ID_RE,
   continuable,
   continueErrorText,
@@ -604,7 +604,7 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
               </div>
             </div>
 
-            {/* the authors as a table; the scraper output (the logs) sits at its bottom */}
+            {/* the authors as a table; the scraper output (the logs) opens in a drawer from the summary */}
             <section ref={resultsRef} aria-label="Authors" className="min-w-0 scroll-mt-32 sm:scroll-mt-20">
               <AuthorsTable view={view} lookups={lookups} fresh={fresh} onShow={open} />
             </section>
@@ -790,6 +790,7 @@ function Summary({
   const running = run?.status === "running";
   const now = useNow(running);
   const result = view?.result ?? null;
+  const [logsOpen, setLogsOpen] = useState(false);
 
   if (!view) {
     return (
@@ -846,8 +847,35 @@ function Summary({
               </a>
             )}
           </div>
-          {lookup && <StatusPill status={lookup.status} />}
+          {lookup && (
+            <div className="flex shrink-0 items-center gap-2">
+              <StatusPill status={lookup.status} />
+              <button
+                type="button"
+                onClick={() => setLogsOpen(true)}
+                aria-haspopup="dialog"
+                title="Scraper output"
+                className={SECONDARY}
+              >
+                <Icon name="terminal" />
+                Logs
+                {running && (
+                  // a div, not a span: span.rounded-full is reserved for badges/status pills (the tests rely on it)
+                  <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          )}
         </div>
+        {logsOpen && lookup && (
+          <OutputDrawer
+            key={lookup.id}
+            runId={lookup.id}
+            running={running}
+            who={username}
+            onClose={() => setLogsOpen(false)}
+          />
+        )}
 
         {lookup && counted && (
           <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-6">
@@ -959,12 +987,134 @@ function Summary({
   );
 }
 
+// The lookup's scraper output (the logs) in a drawer from the left: a native modal <dialog>, so Escape closes it
+// and focus stays inside; a click on the backdrop closes it too. The same output as the User comments page's
+// OutputLog, fetched the same way; it follows new lines unless scrolled up.
+function OutputDrawer({
+  runId,
+  running,
+  who,
+  onClose,
+}: {
+  runId: string;
+  running: boolean;
+  who: string;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [log, setLog] = useState({ lines: [] as string[], received: 0, loaded: false, gone: false });
+  const nextRef = useRef(0);
+  const preRef = useRef<HTMLPreElement>(null);
+  const stickRef = useRef(true);
+
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      try {
+        const data = await api<RunLog>(`runs/${runId}?since=${nextRef.current}`);
+        if (cancelled) return;
+        nextRef.current = data.next;
+        setLog((l) => ({
+          lines: [...l.lines, ...data.lines].slice(-2000),
+          received: l.received + data.lines.length,
+          loaded: true,
+          gone: false,
+        }));
+        if (data.run.status !== "running") return;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+          if (!cancelled) setLog((l) => ({ ...l, loaded: true, gone: true }));
+          return;
+        }
+        // API briefly unreachable: keep trying
+      }
+      if (!cancelled) timer = setTimeout(tick, 2000);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [runId, running]);
+
+  // keep the newest line in view, unless the user has scrolled up to read
+  useEffect(() => {
+    const el = preRef.current;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+  }, [log.received]);
+
+  return (
+    <dialog
+      ref={ref}
+      onClose={onClose}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) ref.current?.close();
+      }}
+      aria-labelledby="output-title"
+      className="fixed inset-y-0 right-auto left-0 m-0 h-dvh max-h-none w-full max-w-[min(44rem,calc(100%-3rem))] flex-col border-r border-zinc-800 bg-zinc-950 p-0 text-zinc-200 shadow-2xl transition-transform duration-200 ease-out backdrop:bg-black/40 open:flex starting:open:-translate-x-full"
+    >
+      <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-4 py-3">
+        {/* divs, not spans: span.rounded-full is reserved for badges/status pills (the tests rely on it) */}
+        <div className="mr-1 flex gap-1" aria-hidden="true">
+          <div className="h-2 w-2 rounded-full bg-red-400" />
+          <div className="h-2 w-2 rounded-full bg-amber-400" />
+          <div className="h-2 w-2 rounded-full bg-emerald-400" />
+        </div>
+        <Icon name="terminal" className="h-3.5 w-3.5 text-zinc-400" />
+        <h2 id="output-title" className="text-[11px] font-semibold tracking-wider whitespace-nowrap text-zinc-300 uppercase">
+          Scraper output
+        </h2>
+        {running && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-950 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-400">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            LIVE
+          </span>
+        )}
+        {who && <span className="min-w-0 truncate text-xs text-zinc-500">· {who}</span>}
+        <button
+          type="button"
+          autoFocus
+          onClick={() => ref.current?.close()}
+          aria-label="Close the scraper output"
+          className="ml-auto rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-500"
+        >
+          <Icon name="x" />
+        </button>
+      </div>
+      <pre
+        ref={preRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
+        }}
+        className="min-h-0 flex-1 overflow-auto px-4 py-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-200"
+      >
+        {log.lines.length
+          ? log.lines.join("\n")
+          : log.gone
+            ? "This lookup is no longer on the scraper API."
+            : !log.loaded
+              ? "Loading output..."
+              : running
+                ? "Waiting for output..."
+                : "No output."}
+      </pre>
+    </dialog>
+  );
+}
+
 // the sticky header cell of the authors table
 const TH =
   "sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 text-left font-medium whitespace-nowrap sm:px-5 dark:border-zinc-800 dark:bg-zinc-900";
 
 // The authors as a compact table in a fixed frame: the rows scroll inside it, not the page. The toolbar holds
-// the earlier-lookups picker, the search and the CSV download; the scraper output (the logs) closes the card.
+// the earlier-lookups picker, the search and the CSV download.
 function AuthorsTable({
   view,
   lookups,
@@ -1171,8 +1321,6 @@ function AuthorsTable({
           </div>
         </>
       )}
-
-      {lookup && <OutputLog key={lookup.id} runId={lookup.id} running={running ?? false} />}
     </div>
   );
 }
