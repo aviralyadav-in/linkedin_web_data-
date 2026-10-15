@@ -7,6 +7,7 @@ import type {
   CommandField,
   CommandsResponse,
   FieldName,
+  GoLoginStatus,
   Run,
   RunLog,
   RunStatus,
@@ -437,6 +438,8 @@ export default function CommandsPanel({
   // settings: the LinkedIn login the server has (null until known), and whether the API can't tell it (older api.py)
   const [session, setSession] = useState<SessionStatus | null>(initialSession);
   const [sessionUnknown, setSessionUnknown] = useState(false);
+  // settings: goes up when Run with GoLogin is switched, which changes the browser (and the login) the session is in
+  const [browserKey, setBrowserKey] = useState(0);
 
   const busy = status?.busy ?? false;
   const busyRef = useRef(busy);
@@ -641,7 +644,7 @@ export default function CommandsPanel({
     return () => {
       cancelled = true;
     };
-  }, [page, link, jobKey]);
+  }, [page, link, jobKey, browserKey]);
 
   async function start(key: string, action: Action, request: (headless: boolean) => Promise<Run>) {
     const headless = await askMode(); // headed or headless browser
@@ -810,7 +813,9 @@ export default function CommandsPanel({
                     hasSession={!!session?.session}
                     onUpload={uploadSession}
                     onCheck={() => start("check", "session", (headless) => post<Run>("session/check", { headless }))}
-                  />
+                  >
+                    <GoLoginSection link={link} busy={busy} onSwitched={() => setBrowserKey((k) => k + 1)} />
+                  </SessionTools>
                   <ProxyCard link={link} />
                 </>
               ) : (
@@ -1622,17 +1627,20 @@ function SessionTools({
   hasSession,
   onUpload,
   onCheck,
+  children,
 }: {
   disabled: boolean;
   hasSession: boolean; // the server has a session already: it is deleted before another is uploaded
   onUpload: (file: File) => void;
   onCheck: () => void;
+  children?: ReactNode; // at the bottom of the card: the GoLogin browser
 }) {
   const uploadOff = disabled || hasSession;
   // the export command for the browser the LinkedIn login is in on the PC
   const exportCommands = [
     { browser: "Chrome", command: "python linkedin_session.py export linkedin_session.json" },
     { browser: "Waterfox", command: "python waterfox.py linkedin_session.py export linkedin_session.json" },
+    { browser: "GoLogin", command: "python gologin_run.py linkedin_session.py export linkedin_session.json" },
   ];
   return (
     <section className={`${CARD} p-4 sm:p-5`} aria-labelledby="session-title">
@@ -1685,11 +1693,12 @@ function SessionTools({
           The server has a session already. To upload another one, delete it first under Session on the server.
         </p>
       )}
+      {children}
     </section>
   );
 }
 
-const SESSION_BROWSER = { waterfox: "Waterfox", chrome: "Chrome" } as const;
+const SESSION_BROWSER = { waterfox: "Waterfox", chrome: "Chrome", gologin: "GoLogin (Orbita)" } as const;
 
 const TONE = {
   green: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
@@ -1855,6 +1864,174 @@ function ProxyCard({ link }: { link: Link }) {
         </>
       )}
     </section>
+  );
+}
+
+const FALLBACK_BROWSER = { waterfox: "Waterfox", chrome: "Chrome" } as const;
+
+// Settings: GoLogin's browser (Orbita, which gives its profile a real device's fingerprint) for the server's runs, at
+// the bottom of the LinkedIn login card: the Run with GoLogin switch, what the server still needs for it, and whether
+// the GoLogin account takes the token. Fetched when the page opens (the API keeps an account check a few minutes) and
+// on Check now.
+function GoLoginSection({ link, busy, onSwitched }: { link: Link; busy: boolean; onSwitched: () => void }) {
+  const [gologin, setGologin] = useState<GoLoginStatus | null>(null);
+  const [failed, setFailed] = useState(false); // the API doesn't tell it (an older api.py) or didn't answer
+  const [checking, setChecking] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (link !== "online") return;
+    let cancelled = false;
+    api<GoLoginStatus>("gologin").then(
+      (g) => {
+        if (cancelled) return;
+        setGologin(g);
+        setFailed(false);
+      },
+      () => {
+        if (!cancelled) setFailed(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [link]);
+
+  async function checkNow() {
+    setChecking(true);
+    try {
+      setGologin(await post<GoLoginStatus>("gologin/check"));
+      setFailed(false);
+    } catch {
+      setFailed(true);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function toggle(enabled: boolean) {
+    setSwitching(true);
+    setError(null);
+    try {
+      setGologin(await post<GoLoginStatus>("gologin", { enabled }));
+      onSwitched();
+    } catch (e) {
+      const code = e instanceof ApiError ? e.status : 0;
+      setError(
+        code === 409
+          ? "A run is going on. Let it finish or stop it, then switch."
+          : code === 422
+            ? "GoLogin can't run on the server yet: see what is missing below."
+            : "The switch didn't change: the scraper API didn't answer. Try again.",
+      );
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  const fallback = gologin ? FALLBACK_BROWSER[gologin.fallback] : "";
+  let account: ReactNode = null;
+  if (gologin?.account === "ok") account = <Tag tone="green">Token works</Tag>;
+  else if (gologin?.account === "login") account = <Tag tone="red">Token refused</Tag>;
+  else if (gologin?.account) account = <Tag tone="amber">Couldn&apos;t reach GoLogin</Tag>;
+
+  return (
+    <div role="group" className="mt-5 border-t border-zinc-100 pt-4 dark:border-zinc-800" aria-labelledby="gologin-title">
+      <div className="flex items-center justify-between gap-3">
+        <h3 id="gologin-title" className="flex items-center gap-2 text-sm font-semibold">
+          <Icon name="users" />
+          GoLogin browser
+        </h3>
+        {gologin && !gologin.missing && (
+          <button type="button" className={SECONDARY} disabled={checking || link !== "online"} onClick={checkNow}>
+            <Icon name="reset" />
+            {checking ? "Checking..." : "Check now"}
+          </button>
+        )}
+      </div>
+      {link !== "online" || failed || !gologin ? (
+        <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {link !== "online"
+            ? "It shows up here once the scraper API is reachable."
+            : failed
+              ? "The scraper API doesn't tell GoLogin yet. Restart it so it runs the latest api.py."
+              : "Loading..."}
+        </p>
+      ) : (
+        <>
+          <dl className="mt-3 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+            <SessionRow label="Run with GoLogin">
+              <Switch
+                checked={gologin.enabled}
+                onChange={toggle}
+                label="Run with GoLogin"
+                disabled={busy || switching || (!gologin.enabled && gologin.missing !== null)}
+              />
+            </SessionRow>
+            <SessionRow label="Runs use">
+              {gologin.active ? <Tag tone="sky">GoLogin (Orbita)</Tag> : fallback}
+            </SessionRow>
+            {gologin.missing ? (
+              <SessionRow label="Missing on the server">
+                <Tag tone="red">{gologin.missing === "package" ? "gologin package" : "GoLogin token"}</Tag>
+              </SessionRow>
+            ) : (
+              <>
+                {account && <SessionRow label="GoLogin account">{account}</SessionRow>}
+                {gologin.profiles != null && (
+                  <SessionRow label="Profiles in the account">{gologin.profiles} of about 100</SessionRow>
+                )}
+                <SessionRow label="Profile for the runs">
+                  {gologin.profile_id ? (
+                    <span className="font-mono text-xs">{gologin.profile_id}</span>
+                  ) : (
+                    <span className="text-zinc-500 dark:text-zinc-400">Made on the first run</span>
+                  )}
+                </SessionRow>
+                {gologin.checked_at && (
+                  <SessionRow label="Checked">
+                    <LocalTime epoch={gologin.checked_at} />
+                  </SessionRow>
+                )}
+              </>
+            )}
+          </dl>
+          {error && <p className="mt-2 text-xs leading-relaxed text-red-700 dark:text-red-300">{error}</p>}
+          {gologin.answer && (
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              GoLogin&apos;s answer: {gologin.answer}
+            </p>
+          )}
+          <p className="mt-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            {gologin.missing === "package" ? (
+              <>
+                The server doesn&apos;t have the gologin package yet. In its <Code>linkedin-2</Code> folder run{" "}
+                <Code>.venv/bin/pip install -r requirements.txt</Code>, then{" "}
+                <Code>sudo systemctl restart linkedin-api</Code>.
+              </>
+            ) : gologin.missing === "token" ? (
+              <>
+                The server has no GoLogin token. Put <Code>GOLOGIN_TOKEN=&lt;token&gt;</Code> in its{" "}
+                <Code>.env</Code>, then <Code>sudo systemctl restart linkedin-api</Code>.
+              </>
+            ) : gologin.enabled ? (
+              <>
+                Every run opens GoLogin&apos;s browser with this profile&apos;s fingerprint. It always opens a window (on
+                the server inside xvfb), so Headless doesn&apos;t apply. Its LinkedIn login is its own: upload a session
+                file above. Switching off goes back to {fallback} and its login.
+              </>
+            ) : (
+              <>
+                Off: runs use {fallback}. Switched on, runs use GoLogin&apos;s browser, which has its own LinkedIn login
+                (upload a session file for it); {fallback}&apos;s login stays for when you switch back.
+              </>
+            )}
+            {busy && " A run is going on: switch after it has ended."}
+          </p>
+        </>
+      )}
+    </div>
   );
 }
 

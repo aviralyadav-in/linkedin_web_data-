@@ -60,7 +60,7 @@ export type ScraperStatus = { busy: boolean; current: Run | null; last: Run | nu
 
 // The LinkedIn login on the scraper's machine (api.py GET /api/session)
 export type SessionStatus = {
-  browser: "waterfox" | "chrome"; // the browser the runs use there
+  browser: "waterfox" | "chrome" | "gologin"; // the browser the runs use there
   session: boolean; // its profile has a LinkedIn login cookie that hasn't expired
   profile?: boolean; // the profile is there, also without a working login (e.g. one LinkedIn logged out); older api.py: unset
   expires: string | null; // when that cookie expires (ISO time)
@@ -86,6 +86,20 @@ export type ProxyUsage = {
   limit_gb: number | null; // the plan's data
   left_gb: number | null;
   expires: string | null; // when the plan ends (ISO time)
+};
+
+// GoLogin's browser on the scraper's machine (api.py GET /api/gologin)
+export type GoLoginStatus = {
+  enabled: boolean; // Run with GoLogin is switched on
+  active: boolean; // the runs use GoLogin now (switched on, and nothing is missing)
+  missing: "package" | "token" | null; // what the machine still needs: the gologin package, or the token
+  profile_id: string | null; // the GoLogin profile the runs use; null: made on the first run
+  fallback: "waterfox" | "chrome"; // the browser the runs use without GoLogin
+  // the GoLogin account (when nothing is missing): ok: it takes the token; login: it refused the token
+  account?: "ok" | "login" | "error";
+  profiles?: number | null; // profiles in the account (it holds about 100)
+  answer?: string; // why the check failed
+  checked_at?: number;
 };
 
 export type RunLog = { run: Run; lines: string[]; next: number };
