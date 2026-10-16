@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, Fragment, type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type {
+  CacheCleared,
   CommandField,
   CommandsResponse,
   FieldName,
@@ -97,6 +98,7 @@ const ICONS = {
   external: "M15 3h6v6m0-6L10 14m8-1v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
   message: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
   reply: "m9 17-5-5 5-5M20 18v-2a4 4 0 0 0-4-4H4",
+  trash: "M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-6 5v6m4-6v6",
 };
 
 export function Icon({ name, className = "h-4 w-4" }: { name: keyof typeof ICONS; className?: string }) {
@@ -803,7 +805,7 @@ export default function CommandsPanel({
                       }
                     >
                       <span className="font-medium">{current.title}</span> is using the browser on the server, so
-                      Upload session file, Check login and Delete session wait until it has ended.
+                      Upload session file, Check login, Delete session and Clear cache wait until it has ended.
                       {current.login_required &&
                         " It is waiting for a LinkedIn login, which nobody can do in a server's browser: stop it, upload a new session, then start it again (a lookup goes on from where it stopped)."}
                     </Notice>
@@ -817,6 +819,7 @@ export default function CommandsPanel({
                     <GoLoginSection link={link} busy={busy} onSwitched={() => setBrowserKey((k) => k + 1)} />
                   </SessionTools>
                   <ProxyCard link={link} />
+                  <CacheCard link={link} blocked={blocked} />
                 </>
               ) : (
                 <RunForm
@@ -1863,6 +1866,74 @@ function ProxyCard({ link }: { link: Link }) {
           )}
         </>
       )}
+    </section>
+  );
+}
+
+const dataSize = (bytes: number) =>
+  bytes >= 1e9
+    ? `${Math.round(bytes / 1e8) / 10} GB`
+    : bytes >= 1e6
+      ? `${Math.round(bytes / 1e6)} MB`
+      : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+
+// Settings: Clear cache. The scraper machine's browser caches (Chrome, Waterfox, GoLogin's Orbita) and Python's
+// compiled files, which they all make again by themselves: the LinkedIn login, the cookies and every setting stay.
+// Not while a run is going on (its browser uses them): the API says 409, and `blocked` disables the button.
+function CacheCard({ link, blocked }: { link: Link; blocked: boolean }) {
+  const [clearing, setClearing] = useState(false);
+  const [result, setResult] = useState<CacheCleared | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function clear() {
+    setClearing(true);
+    setResult(null);
+    setError(null);
+    try {
+      setResult(await post<CacheCleared>("cache/clear"));
+    } catch (e) {
+      const code = e instanceof ApiError ? e.status : 0;
+      setError(
+        code === 409
+          ? "A run is going on. Let it finish or stop it, then clear the cache."
+          : code === 404
+            ? "The scraper API can't clear the cache yet. Restart it so it runs the latest api.py."
+            : "The cache wasn't cleared: the scraper API didn't answer. Try again.",
+      );
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  return (
+    <section className={`${CARD} p-4 sm:p-5`} aria-labelledby="cache-title">
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="cache-title" className="flex items-center gap-2 text-sm font-semibold">
+          <Icon name="history" />
+          Cache
+        </h2>
+        <button type="button" className={SECONDARY} disabled={clearing || blocked || link !== "online"} onClick={clear}>
+          <Icon name="trash" />
+          {clearing ? "Clearing..." : "Clear cache"}
+        </button>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+        Empties the server&apos;s browser caches (Chrome, Waterfox, GoLogin&apos;s Orbita) and Python&apos;s compiled
+        files. They fill up again by themselves. The LinkedIn login, the session and every setting stay.
+      </p>
+      {result && (
+        <p
+          role="status"
+          className={`mt-2 text-xs leading-relaxed ${result.failed ? "text-amber-700 dark:text-amber-300" : "text-zinc-500 dark:text-zinc-400"}`}
+        >
+          {result.failed
+            ? `${result.freed_bytes > 0 ? `${dataSize(result.freed_bytes)} freed, but ` : ""}${plural(String(result.failed), "cache folder")} couldn't be emptied: a browser may still have ${result.failed === 1 ? "it" : "them"} open.`
+            : result.freed_bytes > 0
+              ? `Cache cleared: ${dataSize(result.freed_bytes)} freed.`
+              : "The cache was already empty."}
+        </p>
+      )}
+      {error && <p className="mt-2 text-xs leading-relaxed text-red-700 dark:text-red-300">{error}</p>}
     </section>
   );
 }

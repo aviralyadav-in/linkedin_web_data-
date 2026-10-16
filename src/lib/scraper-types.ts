@@ -102,6 +102,12 @@ export type GoLoginStatus = {
   checked_at?: number;
 };
 
+// What api.py POST /api/cache/clear took out of the scraper machine's cache folders
+export type CacheCleared = {
+  freed_bytes: number;
+  failed: number; // cache folders that couldn't be emptied (a browser still has them open)
+};
+
 export type RunLog = { run: Run; lines: string[]; next: number };
 
 export type ContactType = "email" | "phone" | "whatsapp" | "telegram" | "linkedin";

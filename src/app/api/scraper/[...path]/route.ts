@@ -23,6 +23,7 @@ const ALLOWED: Record<string, RegExp[]> = {
     /^session\/import$/,
     /^session\/check$/,
     /^session\/delete$/,
+    /^cache\/clear$/,
     /^proxy\/check$/,
     /^gologin$/,
     /^gologin\/check$/,
