@@ -31,6 +31,7 @@ import {
   PRIMARY,
   SECONDARY,
   STATUS,
+  SettingsLink,
   StatusPill,
   Switch,
   TYPE_BADGE,
@@ -548,6 +549,7 @@ export default function CommentsPanel({ configured, initialLink, initialStatus, 
           </div>
           <PageTabs active="comments" />
           <ApiBadge configured={configured} link={link} busy={busy} />
+          <SettingsLink />
         </div>
       </header>
 

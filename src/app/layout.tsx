@@ -28,10 +28,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <head>
         {/* Runs while the HTML is parsed, before first paint, so there is no light/dark flash.
-            No stored choice -> follow the system preference. */}
+            No stored choice -> light. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("theme");if(t!=="light"&&t!=="dark"){t=window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}document.documentElement.setAttribute("data-theme",t)}catch(e){}})()`,
+            __html: `(function(){try{var t=localStorage.getItem("theme");if(t!=="light"&&t!=="dark"){t="light"}document.documentElement.setAttribute("data-theme",t)}catch(e){}})()`,
           }}
         />
       </head>

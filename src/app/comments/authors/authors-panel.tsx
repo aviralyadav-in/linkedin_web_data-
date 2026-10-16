@@ -31,6 +31,7 @@ import {
   PRIMARY,
   SECONDARY,
   STATUS,
+  SettingsLink,
   StatusPill,
   Switch,
   TYPE_BADGE,
@@ -516,6 +517,7 @@ export default function AuthorsPanel({ configured, initialLink, initialStatus, i
           </div>
           <PageTabs active="authors" />
           <ApiBadge configured={configured} link={link} busy={busy} />
+          <SettingsLink />
         </div>
       </header>
 

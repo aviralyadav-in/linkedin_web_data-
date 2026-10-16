@@ -99,6 +99,8 @@ const ICONS = {
   message: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
   reply: "m9 17-5-5 5-5M20 18v-2a4 4 0 0 0-4-4H4",
   trash: "M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-6 5v6m4-6v6",
+  settings:
+    "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM9 12a3 3 0 1 0 6 0 3 3 0 1 0-6 0",
 };
 
 export function Icon({ name, className = "h-4 w-4" }: { name: keyof typeof ICONS; className?: string }) {
@@ -742,6 +744,7 @@ export default function CommandsPanel({
           </div>
           <PageTabs active={page === "commands" ? "commands" : undefined} />
           <ApiBadge configured={configured} link={link} busy={busy} />
+          <SettingsLink active={page === "settings"} />
         </div>
       </header>
 
@@ -926,6 +929,26 @@ export function ApiBadge({ configured, link, busy }: { configured: boolean; link
       <span className={`h-2 w-2 rounded-full ${dot}`} />
       {label}
     </span>
+  );
+}
+
+// The gear at the right end of the header of the scraper pages and of Settings: opens Settings (on Settings itself it
+// marks the page).
+export function SettingsLink({ active = false }: { active?: boolean }) {
+  return (
+    <Link
+      href="/settings"
+      aria-label="Settings"
+      title="Settings"
+      aria-current={active ? "page" : undefined}
+      className={`rounded-lg border p-2 ${
+        active
+          ? "border-zinc-400 bg-zinc-100 dark:border-zinc-500 dark:bg-zinc-900"
+          : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
+      }`}
+    >
+      <Icon name="settings" />
+    </Link>
   );
 }
 

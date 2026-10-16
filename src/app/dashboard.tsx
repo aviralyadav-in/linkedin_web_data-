@@ -439,7 +439,7 @@ export default function Dashboard({ contacts, sources }: { contacts: ContactRow[
     try {
       let t = localStorage.getItem("theme");
       if (t !== "light" && t !== "dark") {
-        t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        t = "light";
       }
       document.documentElement.setAttribute("data-theme", t);
     } catch {
